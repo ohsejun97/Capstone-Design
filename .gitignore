@@ -3,6 +3,8 @@ sprint_weights.ckpt
 cache/
 data/DAVIS/
 data/*.zip
+results/*/dti_head.pt
+results/*/lora_adapter.pt
 
 # ── 실험 로그 & 임시 출력 ─────────────────────────────────────
 logs/

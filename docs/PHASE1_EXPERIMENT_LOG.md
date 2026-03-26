@@ -1,8 +1,8 @@
 # Phase 1 실험 일지 — Reference Score 생성
 
-> **작성일시:** 2026년 3월 25일 (수) 21:10 KST
+> **작성일시:** 2026년 3월 25일 (수) KST
 > **목표:** SaProt-650M 기반 DAVIS DTI Reference Score 산출 (Pearson r ≥ 0.8)
-> **현재 상태:** 🔄 진행 중 — V2 완료, r = 0.141, 가중치 전략 재검토 필요
+> **현재 상태:** 🔄 진행 중 — V3 완료 (r = 0.7855), 목표까지 0.015 차이
 
 ---
 
@@ -16,13 +16,14 @@
 | Python | 3.10.20 (Conda: `bioinfo`) |
 | PyTorch | 2.6.0+cu124 |
 | Transformers | 5.3.0 |
-| 데이터셋 | DAVIS test set — 6,011 샘플 |
+| 데이터셋 | DAVIS — DeepPurpose (연속 pKd, 30,056 쌍) |
 
 ---
 
 ## 실험 V1 — SaProt 단독 추론
 
-**일시:** 2026년 3월 25일 (수) (정확한 시각 미기록)
+**일시:** 2026년 3월 25일 (오전)
+**소요 시간:** ~17시간 (CPU)
 
 ### 설정
 
@@ -31,8 +32,7 @@
 | 모델 | `westlake-repl/SaProt_650M_AF2` |
 | 모델 클래스 | `AutoModelForSequenceClassification(num_labels=1)` |
 | 약물 입력 | `tokenizer(protein, SMILES)` — 시퀀스 쌍 직접 입력 |
-| 실행 환경 | CPU (32 threads) |
-| 소요 시간 | ~17시간 |
+| 데이터 | davis_test.csv (panspecies-dti, 이진 레이블) |
 
 ### 결과
 
@@ -40,186 +40,145 @@
 |------|-----|
 | **Pearson R** | **0.030** |
 | 처리 샘플 | 6,011개 |
-| 오류 | 0개 |
 
-### 실패 원인 분석
+### 실패 원인
 
-1. **잘못된 모델 클래스:** `AutoModelForSequenceClassification`은 SaProt 위에 **랜덤 초기화된 선형 레이어**를 추가한다. 이 헤드는 DTI 데이터로 전혀 학습되지 않아 출력이 완전한 노이즈다.
-
-2. **잘못된 입력 포맷:** `tokenizer(protein, SMILES)`로 SMILES를 두 번째 시퀀스로 입력했다. SaProt 어휘집(446 SA 토큰)은 SMILES 문자를 알지 못하므로 입력이 깨진다.
-
-3. **DTI 파인튜닝 없는 PLM 단독 사용:** `SaProt_650M_AF2`는 Masked Language Modeling으로 사전학습된 단백질 언어 모델이다. 결합 친화도 예측을 위해서는 별도의 약물 인코더 + 융합 레이어가 필수다.
+1. **잘못된 모델 클래스:** 랜덤 초기화된 분류 헤드 추가 → 완전한 노이즈 출력
+2. **잘못된 입력 포맷:** SMILES를 단백질 토크나이저에 입력 → 어휘 미인식
+3. **DTI 파인튜닝 없음:** SaProt은 Masked LM 사전학습 모델, 결합 친화도 예측 불가
 
 ---
 
 ## 실험 V2 — SPRINT 아키텍처 + panspecies-dti 가중치
 
-**일시:** 2026년 3월 25일 (수) 20:04 ~ 21:09 KST
-**소요 시간:** 1시간 5분 44초
+**일시:** 2026년 3월 25일 20:04 ~ 21:09 KST
+**소요 시간:** 1시간 5분 44초 (GPU)
 
-### 아키텍처 (panspecies-dti SPRINT, 체크포인트 역설계)
+### 아키텍처
 
 ```
-단백질 경로:
-  SA 시퀀스 (davis_test.csv Target Sequence)
-    → EsmTokenizer (446-token SA 어휘)
-    → SaProt-650M (EsmModel, frozen, 33-layer Transformer)
-    → last_hidden_state[:, 1:-1, :] — CLS/EOS 제외  → [seq_len, 1280]
-    → MultiHeadAttentionPool (4-head, learnable CLS token)  → [1280]
-    → Sequential: LN + LeakyReLU + Linear(1280→1024) × 3 + LN  → [1024]
-    → L2 normalize
+단백질: SA 시퀀스 → SaProt-650M (frozen) → 4-head MultiHeadAttentionPool
+        → Sequential(LN+LeakyReLU+Linear×3) → [1024] → L2 normalize
 
-약물 경로:
-  SMILES
-    → RDKit MorganFP (radius=2, nBits=2048)  → [2048]
-    → Linear(2048→1260) + BN + LeakyReLU
-    → Linear(1260→1024) + BN + LeakyReLU
-    → Linear(1024→1024) + BN + LeakyReLU
-    → Linear(1024→1024)  → [1024]
-    → L2 normalize
+약물:   SMILES → RDKit Morgan FP (2048-bit)
+        → Linear(2048→1260)+BN+LeakyReLU × 3 → Linear(1024) → L2 normalize
 
-융합:
-  코사인 유사도 (NoSigmoid) = dot product (L2 정규화 완료)
+융합:   cosine similarity (dot product)
 ```
 
 ### 가중치
 
 | 항목 | 값 |
 |------|-----|
-| 출처 | [panspecies-dti (SPRINT)](https://github.com/abhinadduri/panspecies-dti) |
-| 파일 | `sprint_weights.ckpt` (192MB) |
+| 출처 | panspecies-dti (SPRINT) |
 | 학습 데이터 | MERGED (BIOSNAP + BindingDB + Human) |
 | 학습 태스크 | 이진 분류 (CE loss) |
-| Epoch | 12 / 15 |
-| Global step | 693,979 |
-
-### 가중치 로딩 결과
-
-```
-target_proj (단백질 헤드): 20/20 키 완전 매칭
-drug_proj   (약물 헤드):   23/23 키 완전 매칭
-```
-
-### 설치 이슈 및 해결 과정
-
-| 이슈 | 원인 | 해결 |
-|------|------|------|
-| `ModuleNotFoundError: No module named 'omegaconf'` | SPRINT 체크포인트 로드 시 omegaconf 필요 | `pip install omegaconf pytorch-lightning` |
-| `Due to a serious vulnerability issue in torch.load` (CVE-2025-32434) | transformers 5.x가 torch < 2.6 거부 | `pip install torch==2.6.0 --index-url ...cu124` |
-| `RuntimeError: operator torchvision::nms does not exist` | torch 2.6 + torchvision 2.5 버전 불일치 | `pip uninstall torchvision torchaudio` (DTI에 불필요) |
 
 ### 결과
 
 | 지표 | 값 |
 |------|-----|
 | **Pearson R** | **+0.1412** |
-| p-value | 3.73e-28 (통계적으로 유의미) |
+| p-value | 3.73e-28 |
 | 처리 샘플 | 6,011개 |
-| 오류 샘플 | 0개 |
-| 소요 시간 | 65분 44초 (GPU, GTX 1650) |
 
-### 예측 스코어 분포
+### 실패 원인
 
-| 통계 | 값 |
+1. **OOD 가중치:** SPRINT은 MERGED 데이터로 학습, DAVIS는 포함 안 됨
+2. **태스크 불일치:** 이진 분류 모델 → 연속 pKd 회귀에 부적합
+3. **평가 데이터 문제:** panspecies-dti DAVIS는 이진 레이블(0/1), 연속 pKd가 아님
+
+---
+
+## 실험 V3 — SaProt + DTI MLP 헤드 (DAVIS 직접 학습)
+
+**일시:** 2026년 3월 25일 21:55 ~ 22:19 KST
+
+### 방법론 전환 배경
+
+V2 실패 분석 결과, 핵심 문제는 **"DTI 태스크용으로 DAVIS에서 직접 학습된 가중치가 없다"**는 것.
+
+해결책: SaProt을 frozen 인코더로 사용하고, 소형 MLP 헤드만 DAVIS 연속 pKd 데이터로 학습.
+
+- **데이터:** DeepPurpose DAVIS (연속 pKd, 30,056 쌍, `binary=False, convert_to_log=True`)
+- **분할:** Train 70% / Val 10% / Test 20% (seed=42)
+
+### 아키텍처
+
+```
+단백질: AA 시퀀스 → SA 포맷("P#F#...") → SaProt (frozen)
+        → mean pool → [prot_dim]  ← pre-computed cache
+
+약물:   SMILES → Morgan FP (radius=2, nBits=2048) → [2048]
+
+DTI 헤드 (훈련 대상):
+  prot_enc: Linear(prot_dim→512) + LayerNorm + GELU + Linear(512→256) + GELU
+  drug_enc: Linear(2048→512) + BatchNorm + GELU + Linear(512→256) + GELU
+  regressor: Linear(512→256) + GELU + Dropout(0.1) + Linear(256→64) + GELU + Linear(64→1)
+
+Loss: HuberLoss(delta=1.0)  |  Optimizer: Adam(lr=1e-3)  |  Scheduler: CosineAnnealingLR
+```
+
+### 실험 V3-A: SaProt-650M
+
+**시작:** 2026-03-25 21:55 | **완료:** 22:16
+
+| 항목 | 값 |
 |------|-----|
-| 평균 | 0.336 |
-| 표준편차 | 0.197 |
-| 최솟값 | -0.247 |
-| 중앙값 | 0.368 |
-| 최댓값 | 0.677 |
+| 인코더 | SaProt-650M-AF2 (1,280-dim, 652M params, frozen) |
+| 단백질 임베딩 계산 | 379개 unique proteins, ~20분 (GPU) |
+| 학습 시간 | **58.7초** (DTI 헤드만) |
+| Epochs | 50 (Early stopping 미작동) |
+| **Test Pearson r** | **0.7855** |
+| Val Best r | 0.7990 |
+| p-value | 0.0 (매우 유의) |
+| Test 샘플 수 | 6,012개 |
 
-### 레이블 분포
+### 실험 V3-B: SaProt-35M
 
-| Label | 샘플 수 |
-|-------|--------|
-| 0 (비결합) | 5,708 (94.96%) |
-| 1 (결합)   | 303 (5.04%) |
+**시작:** 2026-03-25 22:16 | **완료:** 22:18
 
-### V1 → V2 비교
+| 항목 | 값 |
+|------|-----|
+| 인코더 | SaProt-35M-AF2 (480-dim, 327M params, frozen) |
+| 학습 시간 | **54.8초** |
+| Epochs | 50 |
+| **Test Pearson r** | **0.7832** |
+| Val Best r | 0.7872 |
+| p-value | 0.0 |
 
-| 지표 | V1 | V2 | 개선 |
-|------|----|----|------|
-| Pearson R | 0.030 | 0.141 | +0.111 (+370%) |
-| 오류 | 0개 | 0개 | — |
-| 아키텍처 | 랜덤 헤드 | SPRINT (DTI 파인튜닝) | ✅ |
+### 실험 V3-C: SaProt-650M 4-bit
 
----
+**시작:** 2026-03-25 22:18 | **완료:** 22:19 (즉시 실패)
 
-## V2 실패 원인 분석 (Pearson r = 0.141, 목표 미달)
+**오류:** `AssertionError` — bitsandbytes가 EsmModel pooler 레이어를 양자화하면서 shape 불일치
 
-### 원인 1: Out-of-Distribution 가중치
-
-SPRINT 체크포인트는 **MERGED 데이터셋** (BIOSNAP + BindingDB + Human)으로 학습됐다. DAVIS는 포함되지 않았으며 도메인 특성이 다르다.
-
-| 데이터셋 | 특성 | SPRINT 학습 여부 |
-|---------|------|----------------|
-| MERGED (BIOSNAP+BindingDB+Human) | 이진 분류, 다양한 단백질 패밀리 | ✅ |
-| DAVIS | pKd 연속값 회귀, 키나아제 중심 | ❌ |
-
-### 원인 2: 학습 태스크 불일치
-
-- SPRINT: **이진 분류** (CE loss, classify=True)
-- DAVIS 목표: **연속값 회귀** (Pearson r 기준)
-- 이진 분류로 학습된 모델의 cosine similarity가 연속 pKd 값과 상관관계가 낮음
-
-### 원인 3: 클래스 불균형
-
-DAVIS 데이터의 레이블 분포가 **극도로 불균형** (결합: 5%, 비결합: 95%).
-이진 분류 모델은 비결합 샘플에 편향되어 학습됨.
+**해결책:** `EsmModel.from_pretrained(..., add_pooling_layer=False)` 추가 → 재실행 예정
 
 ---
 
-## 다음 단계 전략
+## V1 ~ V3 종합 비교
 
-### 전략 A: `SaProt_650M_AF2_DTI_Davis` 접근 (최우선)
+| 버전 | 방법 | Pearson r | 비고 |
+|------|------|----------|------|
+| V1 | SaProt-650M (랜덤 헤드) | 0.030 | ❌ 입력 오류 + 랜덤 헤드 |
+| V2 | SPRINT + MERGED 가중치 | 0.141 | ❌ OOD + 태스크 불일치 |
+| **V3-650M** | **SaProt-650M + DTI 헤드** | **0.7855** | ✅ 목표 0.015 차이 |
+| **V3-35M** | **SaProt-35M + DTI 헤드** | **0.7832** | ✅ 650M 대비 -0.0023 |
+| V3-4bit | SaProt-650M 4-bit | — | ❌ 재실행 예정 |
 
-Westlake 연구팀의 DAVIS 전용 파인튜닝 모델. 현재 **비공개 저장소**로 HuggingFace 공개 목록에 없음.
-
-```
-접근 방법:
-1. westlake-repl GitHub: https://github.com/westlake-repl/SaProt
-   → Issues 또는 Discussion에 데이터 접근 요청
-2. 논문 저자 이메일 문의
-3. HuggingFace: https://huggingface.co/westlake-repl
-   → 계정 로그인 후 모델 페이지에서 접근 요청 가능 여부 확인
-```
-
-예상 Pearson r: **~0.85+**
-
-### 전략 B: SPRINT을 DAVIS로 파인튜닝
-
-panspecies-dti의 훈련 파이프라인을 활용해 DAVIS train 데이터로 직접 파인튜닝.
-
-```bash
-# davis_train.csv 필요 (panspecies-dti에서 wget)
-# panspecies-dti configs/saprot_agg_config.yaml 수정 후:
-python ultrafast/train.py --config configs/saprot_davis_config.yaml
-```
-
-예상 Pearson r: **~0.80+**
-필요 자원: GTX 1650 (4GB) — 배치 크기 조정 필요
-
-### 전략 C: DeepPurpose DAVIS 즉시 기준값 확보
-
-가장 빠른 방법. SaProt 기반은 아니지만 r ≥ 0.8 상한선 검증에 활용 가능.
-
-```python
-from DeepPurpose import DTI as models
-net = models.model_pretrained(model='MPNN_CNN_DAVIS')
-# DAVIS Pearson r ≈ 0.88
-```
-
-예상 Pearson r: **~0.88**
+### 핵심 발견
+- **650M vs 35M 성능 차이: 0.0023** — 파라미터 약 18배 차이임에도 사실상 동일한 성능
+- Val에서는 650M이 0.799까지 도달 → 모델 개선 여지 있음
+- 목표(r ≥ 0.8)에 근접, 아직 Phase 1 미완료
 
 ---
 
-## 종합 실험 히스토리
+## 다음 단계
 
-| 버전 | 일시 | 모델 | Pearson R | 상태 |
-|------|------|------|----------|------|
-| V1 | 2026-03-25 (오전) | SaProt_650M (랜덤 헤드, CPU) | 0.030 | ❌ 실패 |
-| V2 | 2026-03-25 20:04~21:09 | SaProt_650M + SPRINT 가중치 (GPU) | 0.141 | ⚠️ 부분 성공 |
-| V3 | 예정 | SaProt_650M_DTI_Davis 또는 DAVIS 파인튜닝 | 0.8+ | 🔄 계획 중 |
+1. **V3-C 4bit 재실행** — `add_pooling_layer=False` 패치 후 실행
+2. **r ≥ 0.8 달성 시도** — 하이퍼파라미터 튜닝 또는 사전학습 활용
+3. **Phase 2 전환** — Reference Score 확보 후 경량화 트레이드오프 분석 시작
 
 ---
 
@@ -227,13 +186,19 @@ net = models.model_pretrained(model='MPNN_CNN_DAVIS')
 
 ```
 Capstone_Design/
-├── run_reference.py          # V2 DTI 추론 파이프라인
-├── davis_test.csv            # DAVIS 테스트셋 (6,011 샘플)
-├── reference_scores_osj.csv  # V2 예측 결과 (Pearson r=0.141)
-├── sprint_weights.ckpt       # panspecies-dti SPRINT 가중치 (192MB)
-├── requirements.txt          # 의존성 (torch>=2.6, torchvision 제외)
-├── setup_env.sh              # 환경 설치 스크립트
-└── docs/
-    ├── PHASE1_REFERENCE_PIPELINE.md   # 파이프라인 설계 문서
-    └── PHASE1_EXPERIMENT_LOG.md       # 본 실험 일지
+├── train_dti_saprot.py          # V3 메인 학습 스크립트
+├── run_all_experiments.sh       # 3개 모델 자동 실행
+├── experiments/
+│   ├── run_reference.py         # V2 SPRINT 파이프라인
+│   └── run_baseline_deeppurpose.py
+├── results/
+│   ├── SaProt-650M/             # V3-A 결과 (r=0.7855)
+│   └── SaProt-35M/              # V3-B 결과 (r=0.7832)
+├── outputs/
+│   └── reference_scores_osj.csv # V2 예측값
+├── data/
+│   └── davis_test.csv
+└── cache/
+    ├── prot_embs_650M_none.pt   # 379개 단백질 임베딩 캐시
+    └── prot_embs_35M_none.pt
 ```

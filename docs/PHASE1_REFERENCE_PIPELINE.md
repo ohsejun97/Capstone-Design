@@ -1,360 +1,159 @@
-# Phase 1: Reference Score 생성 실험 보고서
+# Phase 1 파이프라인 설계 문서
 
-> **목표:** SaProt-650M을 이용한 DAVIS 데이터셋 DTI Reference Score 산출 (Pearson r ≥ 0.8)
->
-> **상태:** 🔧 V2 파이프라인 구현 완료 — DTI 파인튜닝 가중치 확보 필요
-
----
-
-## 목차
-
-1. [실험 배경](#1-실험-배경)
-2. [V1 실패 원인 분석](#2-v1-실패-원인-분석)
-3. [V2 아키텍처 설계](#3-v2-아키텍처-설계)
-4. [SA 토큰 포맷 이해](#4-sa-토큰-포맷-이해)
-5. [실행 방법](#5-실행-방법)
-6. [Pearson r ≥ 0.8 달성 전략](#6-pearson-r--08-달성-전략)
-7. [다음 단계: 경량화 실험](#7-다음-단계-경량화-실험)
+> **목표:** SaProt 기반 DTI 파이프라인으로 DAVIS Reference Score 확보 (Pearson r ≥ 0.8)
+> **상태:** 🔄 V3 완료 (r = 0.7855) — LoRA 파인튜닝으로 r ≥ 0.9 도전 예정
 
 ---
 
-## 1. 실험 배경
+## 1. 왜 DeepPurpose를 그냥 쓰지 않나?
 
-### 사용 데이터셋
+DeepPurpose는 `MPNN_CNN_DAVIS` 사전학습 모델로 즉시 r ≈ 0.88을 달성한다.
+그런데 본 프로젝트가 DeepPurpose를 직접 쓰지 않는 이유:
 
-| 항목 | 내용 |
-|------|------|
-| 파일 | `davis_test.csv` |
-| 출처 | [panspecies-dti (abhinadduri)](https://github.com/abhinadduri/panspecies-dti) |
-| 샘플 수 | 6,011개 약물-단백질 쌍 |
-| 포맷 | FoldSeek 3Di 구조 시퀀스 포함 |
-| 레이블 | pKd 기반 이진 분류 (Label: 0/1) |
+| 항목 | DeepPurpose | 본 연구 (SaProt 기반) |
+|------|------------|---------------------|
+| 단백질 인코더 | CNN / AAC (서열만 사용) | SaProt (서열 + **3D 구조** 정보) |
+| 약물 인코더 | MPNN / Morgan / CNN | Morgan FP (동일) |
+| 학습 방식 | end-to-end (전체 재학습) | frozen 인코더 + 소형 헤드 학습 |
+| VRAM 요구 | ~2GB (CNN 기반) | ~2GB frozen, 4bit 시 ~0.8GB |
+| 경량화 실험 | 불가 (구조 고정) | ✅ 35M / 4bit 변형 비교 가능 |
+| 연구 기여 | 없음 (기존 baseline) | 구조 인식 PLM의 경량화 가능성 검증 |
 
-### 참조 레포지토리
+**핵심:** DeepPurpose는 데이터 로더로만 활용. 단백질 표현 방식 자체를 SaProt으로 교체하여 연구 기여도를 만든다.
+
+---
+
+## 2. 전체 파이프라인
+
+### 2.1 데이터 흐름
+
+```
+[DeepPurpose DAVIS]
+  load_process_DAVIS(binary=False, convert_to_log=True)
+  → 30,056 쌍 (SMILES, AA서열, pKd)
+  → Train 70% / Val 10% / Test 20%
+
+[단백질 경로]
+  AA서열
+  → SA 포맷 변환: "MEVK..." → "M#E#V#K#..."
+  → SaProt 토크나이저 (446 SA 어휘)
+  → SaProt Transformer (frozen, 33레이어)
+  → last_hidden_state[:, 1:-1, :] (CLS/EOS 제외)
+  → mean pool → [prot_dim]
+  → cache 저장 (379개 unique 단백질, 재사용)
+
+[약물 경로]
+  SMILES
+  → RDKit MorganFP (radius=2, nBits=2048)
+  → [2048]
+
+[DTI 헤드 (학습 대상)]
+  prot_enc: [prot_dim → 512 → 256]
+  drug_enc: [2048 → 512 → 256]
+  regressor: [512 → 256 → 64 → 1]  ← pKd 예측값
+
+  Loss: HuberLoss(delta=1.0)
+  Optimizer: Adam(lr=1e-3, wd=1e-4)
+  Scheduler: CosineAnnealingLR
+  Early stopping: patience=10
+```
+
+### 2.2 SA 토큰 포맷
+
+SaProt의 입력은 일반 아미노산 서열이 아닌 **SA(Structural Aware) 토큰**:
+
+```python
+# 구조 정보 없을 때 (DeepPurpose DAVIS 원시 서열)
+sa_seq = "".join(aa + "#" for aa in aa_seq)
+# "MEVK" → "M#E#V#K#"
+
+# 구조 정보 있을 때 (AlphaFold + FoldSeek 3Di)
+sa_seq = "".join(aa.upper() + di.lower() for aa, di in zip(aa_seq, foldseek_seq))
+# "MEVK" + "adcp" → "MaEdVcKp"
+```
+
+현재는 DeepPurpose DAVIS의 원시 AA 서열을 사용하므로 `#` 대체 방식 적용.
+AlphaFold 구조를 추가하면 SaProt 성능이 더 올라갈 여지 있음.
+
+---
+
+## 3. 실험 결과 (V3)
+
+| 모델 | Test r | Val Best r | 학습 시간 | 파라미터 |
+|------|--------|-----------|---------|---------|
+| SaProt-650M frozen | 0.7855 | 0.7990 | 58.7초 | 652M frozen + 2.4M head |
+| SaProt-35M frozen | 0.7832 | 0.7872 | 54.8초 | 327M frozen + 1.1M head |
+| SaProt-650M 4bit | — | — | — | 재실행 예정 |
+
+**핵심 발견:** 35M이 650M 대비 파라미터 18배 적지만 성능 차이 **0.0023** → 단백질 인코더 크기가 결정적이지 않음을 시사
+
+---
+
+## 4. 현재 한계와 r ≥ 0.9 달성 전략
+
+### 현재 한계
+
+`frozen SaProt + MLP 헤드` 방식의 근본적 문제:
+- SaProt은 단백질 Masked LM으로 사전학습됨 → **약물-단백질 상호작용 정보 없음**
+- frozen 상태라 DAVIS 데이터셋 특성에 적응 불가
+- 헤드가 고정된 임베딩에서 DTI 정보를 찾아야 하는 구조적 제약
+
+### 전략별 비교
+
+| 전략 | 예상 r | VRAM 추가 | 복잡도 | 추천 |
+|------|--------|----------|--------|------|
+| 에폭 확대 + LR 튜닝 | 0.80~0.82 | 없음 | 낮음 | 빠른 확인용 |
+| 마지막 레이어 unfreeze | 0.83~0.88 | ~500MB | 중간 | — |
+| **LoRA 파인튜닝** | **0.87~0.92** | **~200MB** | **중간** | **✅ 권장** |
+| 전체 파인튜닝 | 0.90+ | >4GB | 높음 | 4GB에서 불가 |
+
+### LoRA 전략 (권장)
+
+```
+기존: SaProt 가중치 W (완전 고정)
+
+LoRA: W' = W + ΔW = W + B·A
+  - A: [d × rank], B: [rank × d]  (rank=16)
+  - 추가 파라미터: ~2M개 (전체의 0.3%)
+  - 학습: A, B + DTI 헤드만
+  - VRAM: +~200MB
+
+기대 효과:
+  SaProt이 DAVIS의 약물-단백질 상호작용 패턴에 적응
+  → frozen 대비 Pearson r +0.05~0.10 기대
+  → 35M + LoRA가 frozen 650M을 초과할 수 있음 (핵심 연구 포인트)
+```
+
+---
+
+## 5. 단계별 로드맵
+
+```
+[현재] Phase 1 진행 중
+  ├── V3 frozen 실험 완료 (650M: 0.7855, 35M: 0.7832)
+  ├── 4bit 재실행 (add_pooling_layer=False 패치)
+  └── LoRA 실험 → r ≥ 0.8 달성 후 Phase 1 완료
+
+[Phase 2] 경량화 트레이드오프 분석
+  ├── LoRA-650M vs LoRA-35M vs LoRA-650M-4bit 비교
+  ├── VRAM 사용량, 추론 속도, Pearson r 종합 분석
+  └── "35M + LoRA ≥ 650M frozen" 가설 검증
+
+[Phase 3] 에이전트 연동
+  ├── smolagents + Gemini API 툴 패키징
+  └── AlphaFold DB 연동 → 실제 SA 토큰 생성
+
+[Phase 4~5] 배포
+  └── Streamlit + FastAPI + Docker
+```
+
+---
+
+## 6. 참조
 
 | 레포 | 역할 |
 |------|------|
-| [SaProt](https://github.com/westlake-repl/SaProt) | 단백질 인코더 (SA 토큰 포맷) |
-| [panspecies-dti (SPRINT)](https://github.com/abhinadduri/panspecies-dti) | 이중-타워 DTI 아키텍처 |
-| [FusionDTI](https://github.com/ZhaohanM/FusionDTI) | 토큰 수준 Cross-Attention 융합 |
-| [DeepPurpose](https://github.com/kexinhuang12345/DeepPurpose) | DAVIS 파인튜닝 가중치 제공 |
-
----
-
-## 2. V1 실패 원인 분석
-
-### 실험 결과
-- **Pearson R = 0.03** (기대치: ≥ 0.8)
-- 사실상 랜덤 예측 수준
-
-### 원인 1: 잘못된 모델 클래스 사용
-
-```python
-# ❌ V1 — 랜덤 분류 헤드 추가 (DTI 학습 없음)
-model = AutoModelForSequenceClassification.from_pretrained(
-    "westlake-repl/SaProt_650M_AF2", num_labels=1
-)
-```
-
-`AutoModelForSequenceClassification`은 SaProt 인코더 위에 **새로운 랜덤 선형 레이어**를 추가한다.
-이 헤드는 DTI 데이터로 전혀 학습되지 않았으므로 출력이 완전한 노이즈다.
-
-### 원인 2: SaProt에 SMILES 입력
-
-```python
-# ❌ V1 — SaProt 토크나이저에 SMILES 동시 입력
-inputs = tokenizer(row['Target Sequence'], row['SMILES'], ...)
-```
-
-SaProt은 **단백질 언어 모델**이다. 어휘집(vocabulary)은 441개의 SA 토큰(아미노산 + FoldSeek 3Di)으로 구성되며, SMILES 문자를 알지 못한다.
-SMILES를 두 번째 시퀀스로 넣으면 토크나이저가 각 문자를 미지의 토큰으로 처리하여 입력이 완전히 깨진다.
-
-### 원인 3: DTI 파인튜닝 없는 PLM 단독 사용
-
-`SaProt_650M_AF2`는 Masked Language Modeling(MLM)으로 사전학습된 **단백질 언어 모델**이다.
-이것만으로는 약물-단백질 결합 친화도를 예측할 수 없다.
-DTI 예측을 위해서는 반드시 **별도의 약물 인코더 + 융합 레이어**가 필요하다.
-
-```
-단순 PLM (사전학습만) → DTI 예측 불가 ❌
-단백질 인코더 + 약물 인코더 + 융합 레이어 → DTI 예측 가능 ✅
-```
-
----
-
-## 3. V2 아키텍처 설계
-
-SPRINT (panspecies-dti) 아키텍처를 기반으로 설계했다.
-
-### 전체 파이프라인
-
-```
-davis_test.csv
-    │
-    ├── Target Sequence (SA 토큰)
-    │       │
-    │       ▼
-    │   EsmTokenizer
-    │       │
-    │       ▼
-    │   SaProt-650M (EsmModel, frozen)
-    │       │  last_hidden_state [seq_len, 1280]
-    │       ▼
-    │   Mean Pooling (CLS/EOS 제외)
-    │       │  [1280]
-    │       ▼
-    │   ProjectionHead (MLP + GELU + LayerNorm)
-    │       │  [1024]
-    │       ▼
-    │   L2 Normalize ──────────────────────────┐
-    │                                          │
-    └── SMILES                                 │  코사인 유사도
-            │                                  │
-            ▼                                  │
-        RDKit MolFromSmiles                    │
-            │                                  │
-            ▼                                  │
-        Morgan FP (radius=2, nBits=2048)       │
-            │  [2048]                          │
-            ▼                                  │
-        ProjectionHead (MLP + GELU + LayerNorm)│
-            │  [1024]                          │
-            ▼                                  │
-        L2 Normalize ──────────────────────────┘
-                                               │
-                                               ▼
-                                       binding score (float)
-```
-
-### 모델 클래스 변경
-
-| 항목 | V1 (잘못됨) | V2 (수정됨) |
-|------|------------|------------|
-| 단백질 인코더 | `AutoModelForSequenceClassification` | `EsmModel` |
-| 약물 인코더 | 없음 (SMILES를 토크나이저에 직접 입력) | Morgan Fingerprint (RDKit) |
-| 융합 방식 | SaProt logits (랜덤 헤드) | 코사인 유사도 (ProjectionHead 투영 후) |
-| 입력 방식 | `tokenizer(protein, SMILES)` | 단백질/약물 분리 인코딩 |
-
-### ProjectionHead 구조
-
-```python
-class ProjectionHead(nn.Module):
-    def __init__(self, in_dim: int, out_dim: int):
-        self.net = nn.Sequential(
-            nn.Linear(in_dim, out_dim),
-            nn.GELU(),
-            nn.LayerNorm(out_dim),
-            nn.Linear(out_dim, out_dim),
-        )
-    def forward(self, x):
-        return F.normalize(self.net(x), dim=-1)
-```
-
----
-
-## 4. SA 토큰 포맷 이해
-
-### 포맷 정의
-
-SaProt의 SA(Structural Aware) 토큰은 **아미노산 1문자(대문자) + FoldSeek 3Di 구조 1문자(소문자)**를 쌍으로 묶은 2문자 단위다.
-
-```
-아미노산: ACDEFGHIKLMNPQRSTVWY  (20종)
-3Di 구조: pynwrqhgdlvtmfsaeikc   (20종)
-특수 마스크: #  (pLDDT < 70, 구조 신뢰도 낮음)
-```
-
-### 예시
-
-```
-고신뢰도 잔기:  "Ma" → Met(M) + 3Di='a'
-                "Ev" → Glu(E) + 3Di='v'
-
-저신뢰도 잔기:  "P#" → Pro(P) + 3Di='#' (pLDDT < 70)
-                "F#" → Phe(F) + 3Di='#'
-```
-
-### davis_test.csv 포맷
-
-```
-Target Sequence 컬럼 예시:
-P#F#W#K#I#L#N#P#L#L#E#R#DdPqNqLkFkVfAfLlYaDfFd...
-│ │ │ │                  │ │ │ │ │ │
-P# F# W# K# ...          Dd Pq Nq Lk Fk ...
-(저신뢰도 구간)            (고신뢰도 구간)
-```
-
-데이터가 **이미 올바른 SA 포맷**으로 저장되어 있으므로 별도 전처리 없이 `EsmTokenizer`에 직접 입력 가능하다.
-
-### 어휘집 구성
-
-| 구분 | 수량 |
-|------|------|
-| SA 토큰 (21 AA × 21 3Di) | 441개 |
-| 특수 토큰 (CLS, EOS, PAD 등) | 5개 |
-| **합계** | **446개** |
-
----
-
-## 5. 실행 방법
-
-### 환경 설정
-
-```bash
-# 의존성 설치
-pip install -r requirements.txt
-
-# (선택) Hugging Face 토큰 설정 — gated model 접근 시 필요
-export HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxx
-
-# (선택) SPRINT 가중치 경로 설정 — Pearson r ≥ 0.8 달성 시 필요
-export SPRINT_CHECKPOINT=/path/to/sprint_weights.ckpt
-```
-
-### 실행
-
-```bash
-python run_reference.py
-```
-
-### 출력 파일
-
-| 파일 | 내용 |
-|------|------|
-| `reference_scores_osj.csv` | `smiles`, `reference_score`, `label` |
-
-### 실행 예상 시간
-
-| 환경 | 예상 시간 |
-|------|----------|
-| 연구 서버 (32코어 CPU) | ~3~5시간 |
-| GTX 1650 (GPU) | ~30분 |
-| M1 Mac / 일반 노트북 | ~8시간 |
-
----
-
-## 6. Pearson r ≥ 0.8 달성 전략
-
-### 현재 상태 분석
-
-| 방법 | 예상 Pearson r | 가중치 상태 |
-|------|--------------|------------|
-| V1 (SaProt 단독 + 랜덤 헤드) | 0.03 | ❌ 의미 없음 |
-| V2 zero-shot (가중치 없음) | ~0.1~0.3 | ⚠️ 파인튜닝 없음 |
-| **V2 + SPRINT 가중치** | **~0.8+** | ✅ DTI 파인튜닝 완료 |
-| V2 + SaProt_DTI_Davis (gated) | **~0.85+** | ✅ DAVIS 전용 파인튜닝 |
-
-### 옵션 A: SPRINT 가중치 (권장)
-
-panspecies-dti에서 공개한 SPRINT 체크포인트를 사용한다. MERGED 데이터셋으로 파인튜닝된 가중치이며 DAVIS에서도 좋은 성능을 보인다.
-
-```bash
-# 1. Google Drive에서 다운로드
-#    https://drive.google.com/file/d/1uojdSn1otFKi-DBJyTKoOA6OZbwOQX6U
-
-# 2. 환경변수 설정
-export SPRINT_CHECKPOINT=./sprint_weights.ckpt
-
-# 3. 실행
-python run_reference.py
-```
-
-### 옵션 B: SaProt DTI Davis (Gated)
-
-Westlake 연구팀의 DAVIS 전용 파인튜닝 모델. HuggingFace 접근 승인 필요.
-
-```bash
-# 1. https://huggingface.co/westlake-repl/SaProt_650M_AF2_DTI_Davis 에서 접근 요청
-# 2. 승인 후 토큰 설정
-export HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxx
-# 3. run_reference.py의 SAPROT_MODEL을 변경
-#    SAPROT_MODEL = "westlake-repl/SaProt_650M_AF2_DTI_Davis"
-python run_reference.py
-```
-
-### 옵션 C: DeepPurpose 즉시 검증 (빠른 기준값 확보)
-
-DAVIS 전용 파인튜닝 가중치가 공개된 DeepPurpose를 통해 즉시 r ≥ 0.8 기준값을 확보할 수 있다.
-SaProt 기반은 아니지만 경량화 비교의 상한선으로 활용 가능하다.
-
-```python
-from DeepPurpose import DTI as models
-net = models.model_pretrained(model='MPNN_CNN_DAVIS')
-# DAVIS에서 Pearson r ≈ 0.88 달성
-```
-
----
-
-## 7. 다음 단계: 경량화 실험
-
-Reference Score 확보 후 아래 단계로 진행한다.
-
-### 실험 계획
-
-```
-Phase 1 (현재): Reference Score 산출
-    └── SaProt-650M (full precision, CPU)
-        → reference_scores_osj.csv
-
-Phase 2: 경량화 모델 구현
-    ├── SaProt-35M (backbone 교체)
-    ├── SaProt-650M + 8-bit 양자화 (bitsandbytes)
-    └── SaProt-650M + 4-bit 양자화 (bitsandbytes NF4)
-
-Phase 3: 성능 비교 분석 (R 언어)
-    └── Pearson r 비교: Full vs Quantized
-        목표: r_lightweight ≥ 0.8 × r_reference
-
-Phase 4: 에이전트 통합
-    └── smolagents + Gemini 1.5 Flash API
-        → 자연어 쿼리 → DTI 예측 파이프라인
-```
-
-### 경량화 코드 스니펫 (Phase 2 미리보기)
-
-```python
-# 4-bit 양자화 적용 예시
-from transformers import BitsAndBytesConfig
-
-bnb_config = BitsAndBytesConfig(
-    load_in_4bit=True,
-    bnb_4bit_compute_dtype=torch.float16,
-    bnb_4bit_quant_type="nf4",
-    bnb_4bit_use_double_quant=True,
-)
-
-saprot_4bit = EsmModel.from_pretrained(
-    "westlake-repl/SaProt_650M_AF2",
-    quantization_config=bnb_config,
-    device_map="auto",
-)
-# 예상 VRAM: ~1.5GB (원본 2.5GB 대비 40% 감소)
-```
-
-### 목표 지표
-
-| 모델 | VRAM | 예상 Pearson r | 목표 |
-|------|------|--------------|------|
-| SaProt-650M (FP32) | ~2.5 GB | 0.85+ | 기준값 |
-| SaProt-650M (8-bit) | ~1.3 GB | 0.83+ | ✅ |
-| SaProt-650M (4-bit) | ~0.8 GB | 0.80+ | ✅ |
-| SaProt-35M (FP32) | ~0.15 GB | 0.75+ | △ |
-| SaProt-35M (4-bit) | ~0.05 GB | 0.70+ | △ |
-
----
-
-## 부록: 파일 구조
-
-```
-Capstone_Design/
-├── run_reference.py          # V2 DTI 추론 파이프라인 (본 보고서 대상)
-├── davis_test.csv            # DAVIS 테스트셋 (6,011 샘플)
-├── reference_scores_osj.csv  # 생성된 Reference Score
-├── requirements.txt          # 의존성 목록
-└── docs/
-    └── PHASE1_REFERENCE_PIPELINE.md   # 본 보고서
-```
-
----
-
-*최종 업데이트: 2026-03-25*
+| [westlake-repl/SaProt](https://github.com/westlake-repl/SaProt) | SaProt 모델, SA 토큰 포맷 |
+| [abhinadduri/panspecies-dti](https://github.com/abhinadduri/panspecies-dti) | SPRINT 아키텍처, davis_test.csv |
+| [kexinhuang12345/DeepPurpose](https://github.com/kexinhuang12345/DeepPurpose) | DAVIS 데이터 로더, 기준선 비교 |
+| [ZhaohanM/FusionDTI](https://github.com/ZhaohanM/FusionDTI) | Cross-Attention 융합 참고 |

@@ -1,70 +1,221 @@
 # [Capstone Project] Agentic FusionDTI: 저사양 환경을 위한 지능형 신약 재창출 플랫폼
 
-## 1. 프로젝트 개요 (Overview)
-본 프로젝트는 2025년 최신 SOTA(State-of-the-Art) 모델인 **FusionDTI**와 **smolagents**를 결합하여, 전문가용 바이오 분석 도구를 일반 연구자도 쉽게 사용할 수 있도록 지능화 및 경량화한 **엔드 투 엔드(End-to-End) 분석 플랫폼** 구축을 목표로 함.
+## 1. 프로젝트 개요
 
-## 2. 기존 방법론의 한계 (Limitations)
-*   **높은 하드웨어 장벽:** 최신 DTI 모델(예: SaProt-650M)은 고성능 GPU(VRAM 12GB 이상)를 필수로 요구하여 보급형 환경에서 구동이 불가능함.
-*   **인터페이스의 복잡성:** 대부분의 SOTA 모델은 CLI(터미널) 기반으로, 비전공자가 SMILES 문자열이나 아미노산 서열을 직접 다루기에 진입장벽이 높음.
-*   **설명력(Explainability) 부족:** 모델이 산출한 결합 점수(Affinity Score)에 대한 생물학적/통계적 근거 제시가 미흡함 (Black-box 모델).
+본 프로젝트는 최신 단백질 언어 모델 **SaProt**을 경량화하여, 보급형 GPU(GTX 1650, 4GB)에서도 실시간 **약물-표적 상호작용(DTI)** 예측이 가능한 지능형 플랫폼을 구축하는 것을 목표로 한다.
 
-## 3. 핵심 가설 (Core Hypothesis)
-> "최신 DTI 모델을 **4-bit 양자화(Quantization)** 및 **경량 백본(SaProt-35M)**으로 최적화하더라도, 원본 모델과의 **Pearson 상관계수(r)가 0.8 이상**을 유지한다면, 보급형 디바이스(GTX 1650) 기반의 실시간 신약 탐색 보조 도구로서 충분한 유효성을 가질 것이다."
+---
 
-## 4. 연구 기여도 (Contribution)
-*   **AI 민주화 (Democratization):** 고가의 서버 없이 GTX 1650(4GB) 수준의 보급형 GPU에서 최신 바이오 AI 연구가 가능한 환경 제안.
-*   **지능형 워크플로우 자동화:** 자연어 질의를 통해 데이터 수집(AlphaFold DB), 전처리, 분석, 시각화까지 에이전트가 자율적으로 수행하는 시스템 구축.
-*   **신뢰성 검증 연구:** 경량화 모델과 SOTA 원본 모델 간의 통계적 비교 분석(R 활용)을 통해 공학적 트레이드오프(Trade-off) 데이터 확보.
+## 2. 핵심 가설
 
-## 5. 기술 스택 (Tech Stack)
-*   **Model:** FusionDTI (2025 SOTA), SaProt (Protein Encoder)
-*   **Agent:** smolagents (Hugging Face), Gemini 1.5 Flash (Free API)
-*   **Optimization:** bitsandbytes (4-bit/8-bit Quantization), ESM-2 (35M Backbone)
-*   **Backend/Frontend:** Python, Streamlit, FastAPI
-*   **Infrastructure:** Docker, WSL2, Linux Server (32-Threads CPU)
-*   **Statistics:** R (Pearson Correlation, T-test, RMSE)
+> **"SaProt-650M 대비 SaProt-35M(경량 백본) 또는 4-bit 양자화 모델이**
+> **Pearson r 기준 90% 이상을 유지하면서, VRAM 사용량을 80% 이상 줄일 수 있는가?"**
 
-## 6. 분석 파이프라인 및 플로우차트 (Pipeline)
+검증 벤치마크: DAVIS 데이터셋 (연속 pKd 회귀, 30,056 쌍)
 
-### 6.1. 데이터 흐름
-1.  **User Query:** "타이레놀이 탈모 단백질에 효과가 있을까?" (자연어 입력)
-2.  **Agent Analysis:** 질의 분석 후 UniProt/AlphaFold DB에서 타겟 서열 및 3D PDB 추출.
-3.  **Preprocessing:** SMILES → SELFIES 변환 및 PDB → SA Vocabulary(FoldSeek) 변환.
-4.  **Inference:** 경량화된 FusionDTI 엔진으로 결합 점수 산출.
-5.  **Reporting:** 3D 구조 시각화 및 에이전트의 결과 해석 리포트 생성.
+---
 
-### 6.2. 시스템 플로우차트
+## 3. 기존 방법 대비 차별점
+
+### DeepPurpose 표준 방식 (기존)
+
+```
+SMILES ──→ [MPNN 약물 인코더  ]  ─┐
+                                   ├──→ [결합 레이어] → pKd
+AA서열 ──→ [CNN  단백질 인코더]  ─┘
+          ↑___________________________↑
+              전체를 DAVIS로 end-to-end 학습
+```
+
+- 약물·단백질 인코더 + 헤드를 **처음부터 DAVIS로 전부 학습**
+- 사전학습 모델(`MPNN_CNN_DAVIS`) 제공, 바로 사용 시 Pearson r ≈ 0.88
+- 단점: 단순한 분자 지문/CNN 인코더 → 단백질 구조 정보 미반영
+
+### 본 연구 방식 (SaProt 기반)
+
+```
+SMILES ──→ [Morgan FP (2048-bit)] ──────────────────────┐
+                                                         ├──→ [DTI MLP 헤드] → pKd
+AA서열 ──→ [SA 토큰 변환] → [SaProt (구조 인식 PLM)] ───┘
+                                    ↑
+                        아미노산 + FoldSeek 3Di 구조 정보
+```
+
+- **SaProt**: 아미노산 서열 + 3D 구조 정보(SA 토큰)를 함께 인코딩하는 단백질 언어 모델
+- 단백질 인코더를 frozen 상태로 고정 → 작은 DTI 헤드만 DAVIS로 학습
+- GTX 1650(4GB)에서 학습 가능, 헤드 학습 시간 ~1분
+
+---
+
+## 4. 전체 파이프라인
+
 ```mermaid
 graph TD
     A[사용자 자연어 쿼리] --> B(smolagents + Gemini API)
     B --> C{Tool 호출}
-    
-    subgraph "Data & Preprocessing"
-        C --> D[AlphaFold DB: PDB/Sequence 확보]
-        D --> E[FoldSeek: SA Vocab 변환]
-        C --> F[SELFIES: 분자 인코딩 변환]
+
+    subgraph "데이터 입력"
+        C --> D[SMILES 약물 구조]
+        C --> E[아미노산 서열 / AlphaFold PDB]
     end
-    
-    subgraph "Hybrid Execution Engine"
-        E & F --> G[PC: 경량화 모델 - GTX 1650]
-        E & F --> H[Server: 원본 모델 - 32 Threads]
+
+    subgraph "인코딩"
+        D --> F[Morgan Fingerprint<br/>2048-bit]
+        E --> G[SA 토큰 변환<br/>AA + FoldSeek 3Di]
+        G --> H[SaProt 단백질 언어 모델<br/>35M / 650M]
     end
-    
-    G --> I[실시간 결과 및 3D 시각화]
-    H --> J[통계적 대조 데이터 생성]
-    
-    I & J --> K((R 통계 분석: 상관관계 검증))
-    K --> L[최종 분석 리포트 및 Docker 배포]
+
+    subgraph "경량화 비교 실험"
+        H --> I[SaProt-650M<br/>기준 모델]
+        H --> J[SaProt-35M<br/>경량 모델 ×18↓]
+        H --> K[SaProt-650M 4-bit<br/>양자화 모델]
+    end
+
+    F --> L[DTI MLP 헤드]
+    I --> L
+    J --> L
+    K --> L
+    L --> M[pKd 예측값]
+
+    M --> N{Pearson r 비교}
+    N -->|r ≥ 기준×0.9| O[✅ 경량화 성공<br/>GTX 1650 실시간 배포]
+    N -->|r < 기준×0.9| P[❌ 성능 미달]
+
+    O --> Q[Streamlit UI / FastAPI]
+    Q --> R[Docker 배포]
 ```
 
-## 7. 실험 과정 (Experimental Process)
-1.  **Step 1 (Baseline):** 연구실 Linux 서버(CPU 32스레드)에서 원본 SaProt-650M 모델을 구동하여 DAVIS 데이터셋의 Reference Score 확보.
-2.  **Step 2 (Optimization):** 연구실 PC(GTX 1650)에서 SaProt-35M 모델에 4-bit 양자화를 적용하여 메모리 점유율 및 추론 속도 최적화.
-3.  **Step 3 (Agentic Integration):** smolagents를 활용하여 AlphaFold DB API 연동 및 데이터 전처리 도구(Tool) 패키징.
-4.  **Step 4 (Validation):** 서버 결과(원본)와 PC 결과(경량화) 사이의 Pearson 상관분석 수행 (R 언어 활용).
-5.  **Step 5 (Deployment):** 전체 시스템을 Docker 이미지로 빌드하여 환경 격리 및 배포 재현성 확보.
+---
 
-## 8. 기대 결과 및 결론 (Expected Conclusion)
-*   **기술적 성과:** VRAM 사용량을 80% 이상 절감하면서도 SOTA 모델의 예측 경향성을 유지하는 경량화 엔진 완성.
-*   **실용적 성과:** 복잡한 바이오 데이터를 몰라도 자연어로 신약 후보 물질을 탐색할 수 있는 '지능형 연구 비서' 구현.
-*   **결론:** 본 프로젝트는 최신 AI 기술의 학술적 가치와 공학적 최적화, 그리고 에이전트를 통한 사용자 경험 혁신을 통합함으로써, 제한된 자원 환경에서의 고성능 서비스 구축 가능성을 입증함.
+## 5. 현재 진행 상태
+
+> **📍 Phase 1 진행 중 — Reference Score 확보 (목표: r ≥ 0.8)**
+
+| 버전 | 방법 | Pearson r | 상태 |
+|------|------|----------|------|
+| V1 | SaProt-650M (랜덤 헤드, CPU) | 0.030 | ❌ 입력 오류 |
+| V2 | SPRINT + panspecies-dti 가중치 | 0.141 | ❌ OOD 문제 |
+| **V3-650M** | **SaProt-650M frozen + MLP 헤드** | **0.7855** | ✅ 현재 최고 |
+| **V3-35M** | **SaProt-35M frozen + MLP 헤드** | **0.7832** | ✅ 650M 대비 -0.0023 |
+| V3-4bit | SaProt-650M 4-bit + MLP 헤드 | — | 🔧 재실행 예정 |
+
+**핵심 발견:** 35M 모델이 파라미터 약 18배 적음에도 650M 대비 성능 차이 0.0023 (사실상 동일)
+
+---
+
+## 6. r ≥ 0.9 달성 전략 (향후 연구 방향)
+
+현재 frozen 방식의 한계: SaProt이 단백질-약물 상호작용을 모른 채로 특징만 추출.
+
+### 단기 (Phase 1 완료 목표)
+
+| 방법 | 예상 효과 | VRAM 증가 |
+|------|---------|----------|
+| **LoRA 파인튜닝** (권장) | r ≈ 0.85~0.92 | ~200MB |
+| 에폭 확대 + LR 스케줄 조정 | r ≈ 0.80~0.82 | 없음 |
+| SaProt 마지막 레이어 일부 unfreeze | r ≈ 0.83~0.88 | ~500MB |
+
+**LoRA 전략 상세:**
+```
+SaProt 어텐션 레이어에 rank-16 LoRA 어댑터 추가
+→ 추가 파라미터: ~2M개 (전체의 0.3%)
+→ SaProt이 DAVIS DTI 태스크에 맞게 적응
+→ 35M + LoRA가 frozen 650M을 넘어설 수 있음
+```
+
+### 장기 (Phase 2~3)
+
+```
+Phase 2:  LoRA-35M vs LoRA-650M vs 4bit 비교 → 경량화 트레이드오프 분석
+Phase 3:  smolagents + Gemini API 에이전트 연동 → 자연어 DTI 예측
+Phase 4:  Streamlit UI + FastAPI 백엔드
+Phase 5:  Docker 이미지 배포
+```
+
+---
+
+## 7. 실행 방법
+
+### 로컬 (frozen, 빠름 ~1분)
+
+```bash
+# 환경 설치
+bash setup_env.sh
+
+# frozen 모드 (임베딩 캐시 → 헤드만 학습)
+python train_dti_saprot.py --encoder 650M          # 기준 모델 (r=0.7855)
+python train_dti_saprot.py --encoder 35M            # 경량 모델 (r=0.7832)
+python train_dti_saprot.py --encoder 650M --quant 4bit  # 양자화
+```
+
+### Google Colab T4 (LoRA, 권장)
+
+> GTX 1650에는 Tensor Core가 없어 LoRA 학습이 에폭당 ~2.5시간 소요.
+> Colab T4는 에폭당 ~10분으로 대폭 단축.
+
+**실행:** `notebooks/train_lora_colab.ipynb` 열기 → T4 런타임 선택 → 순서대로 실행
+
+```bash
+# LoRA 파인튜닝 (Colab 환경)
+python train_dti_saprot.py --encoder 35M --lora          # 핵심 실험 (0.55M params)
+python train_dti_saprot.py --encoder 650M --lora         # 풀 모델 비교
+```
+
+### 주요 인자
+
+| 인자 | 옵션 | 기본값 |
+|------|------|--------|
+| `--encoder` | `650M`, `35M` | `650M` |
+| `--quant` | `none`, `4bit`, `8bit` | `none` |
+| `--lora` | flag | off |
+| `--lora_r` | 정수 | `16` |
+| `--epochs` | 정수 | `50` |
+| `--patience` | 정수 | `10` |
+
+---
+
+## 8. 기술 스택
+
+| 분류 | 스택 |
+|------|------|
+| 단백질 인코더 | SaProt (35M / 650M AF2), SA 토큰 (AA + FoldSeek 3Di) |
+| 약물 인코딩 | RDKit Morgan Fingerprint (radius=2, nBits=2048) |
+| 경량화 | bitsandbytes (4-bit NF4 양자화), LoRA (예정) |
+| ML 프레임워크 | PyTorch, Hugging Face Transformers |
+| 에이전트 | smolagents, Gemini 1.5 Flash API |
+| 프론트/백엔드 | Streamlit, FastAPI |
+| 인프라 | Docker, WSL2, Linux (32코어) |
+| 통계 | Pearson r, CI (Concordance Index) |
+
+## 9. SA 토큰 포맷
+
+SaProt의 핵심 입력 포맷: **아미노산(대문자) + FoldSeek 3Di 구조 토큰(소문자)** 쌍
+
+```python
+# 구조 정보 없는 경우 '#' 대체
+sa_seq = "".join(aa + "#" for aa in aa_seq)
+# 예: "MET" → "M#E#T#"  (토큰: ["M#", "E#", "T#"])
+
+# 구조 정보 있는 경우
+sa_seq = "".join(aa.upper() + di.lower() for aa, di in zip(aa_seq, foldseek_3di))
+# 예: "MaEvKc..."  (토큰: ["Ma", "Ev", "Kc"])
+```
+
+어휘: 21 AA × 21 3Di = 441 토큰 + 5 특수 토큰 = **446 총 어휘**
+
+---
+
+## 10. 환경 주의사항
+
+- `torch >= 2.6.0` 필수 (CVE-2025-32434 대응)
+- `torchvision`, `torchaudio` 설치 금지 (충돌)
+- GPU: GTX 1650 SUPER (4GB, CUDA 12.6)
+- Conda 환경: `bioinfo` (Python 3.10)
+
+---
+
+## 11. 실험 상세 기록
+
+- [Phase 1 실험 일지](docs/PHASE1_EXPERIMENT_LOG.md)
+- [Phase 1 파이프라인 설계](docs/PHASE1_REFERENCE_PIPELINE.md)
+- [Phase 1 학습 실험 보고서](docs/PHASE1_TRAINING_EXPERIMENTS.md)
