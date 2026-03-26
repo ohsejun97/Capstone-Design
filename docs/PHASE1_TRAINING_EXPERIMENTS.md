@@ -1,8 +1,8 @@
 # Phase 1 학습 실험 보고서 — SaProt DTI 헤드 학습 결과
 
-> **작성일시:** 2026년 3월 26일 KST
+> **작성일시:** 2026년 3월 27일 KST (최종 업데이트)
 > **목표:** SaProt frozen / LoRA 방식으로 DAVIS 연속 pKd 학습 후 경량화 트레이드오프 비교
-> **현재 상태:** ⏳ LoRA 실험 — Google Colab T4에서 재실행 예정 (로컬 GTX 1650 너무 느림)
+> **현재 상태:** ⏳ LoRA 실험 — Colab GPU 한도 초과로 사용 불가 → Kaggle(P100, 주 30h) 또는 로컬 35M LoRA로 대체 예정
 
 ---
 
@@ -69,9 +69,12 @@ LoraConfig(
 |------|---------------|-----------|---------|------|
 | SaProt-650M frozen | **0.7855** | 0.7990 | 58.7초 | ✅ |
 | SaProt-35M frozen | **0.7832** | 0.7872 | 54.8초 | ✅ |
-| SaProt-650M-4bit frozen | — | — | — | 🔧 재실행 예정 |
+| SaProt-650M-4bit frozen | **0.7914** | 0.8016 | 197.6초 | ✅ |
 
-**핵심 발견:** 35M이 650M 대비 파라미터 50% 적음에도 성능 차이 단 0.0023
+**핵심 발견:**
+- 35M이 650M 대비 파라미터 약 19배 적음에도 성능 차이 단 0.0023
+- 4bit 양자화 적용 시 성능 소폭 향상 (val r 0.7990 → **0.8016**, 목표치 0.8 달성)
+- 4bit frozen 만으로도 val r ≥ 0.8 달성 — Q3의 충분 조건 부분 충족
 
 ---
 
@@ -85,14 +88,14 @@ LoraConfig(
 | Train Loss (Epoch 1) | 0.3283 |
 | Val Pearson r (Epoch 1) | 0.5410 |
 | 에폭당 소요 시간 (GTX 1650) | ~2.5시간 (Tensor Core 없음) |
-| **재실행 환경** | **Google Colab T4 GPU (예상 10~15분/에폭)** |
-| **Test Pearson r** | **TBD (Colab 실행 후 업데이트)** |
+| **재실행 환경** | **Kaggle (P100 16GB, 주 30h 무료) 또는 로컬 장시간 실행** |
+| **Test Pearson r** | **TBD** |
 
-**상태:** ⏳ Colab 재실행 예정
+**상태:** ⏳ 재실행 필요
 
 > **로컬 중단 이유:** GTX 1650 SUPER에는 Tensor Core가 없어 FP16 행렬 연산이 매우 느림.
 > Epoch 1 완료까지 ~2.5시간 소요 → 50에폭 완료까지 ~125시간 필요.
-> Colab T4(Tensor Core 포함, 65 TFLOPS FP16)에서는 에폭당 10~15분으로 단축 가능.
+> **Colab 사용 불가 (2026-03-27 GPU 한도 초과)** → Kaggle P100으로 대체 검토 중.
 
 ---
 
@@ -103,9 +106,14 @@ LoraConfig(
 | 학습 파라미터 | ~10M (전체 652M의 1.5%) |
 | batch_size | 8 |
 | Gradient checkpointing | ✅ (VRAM 절약) |
-| **Test Pearson r** | **TBD** |
+| Colab 실행 결과 | **Epoch 36에서 GPU 한도 초과로 강제 중단** |
+| Val Pearson r (Epoch 36 부근) | **~0.8x (목표치 확인, 정확한 수치 미기록)** |
+| **Test Pearson r** | **TBD (체크포인트 없어 가중치 소실)** |
 
-**상태:** ⏳ 35M 완료 후 실행 예정
+**상태:** ❌ Colab GPU 한도 초과 중단 — 재실행 시 체크포인트 저장 필수
+
+> **교훈:** 학습 루프에 best 갱신 시 즉시 디스크 저장 로직 추가 필요.
+> 현재 코드는 학습 완료 후에만 저장 → 중단 시 가중치 전부 소실.
 
 ---
 
@@ -128,9 +136,9 @@ LoraConfig(
 | V2 | 2026-03-25 20:04 | SPRINT + MERGED 가중치 | 0.141 | ❌ OOD |
 | V3-A | 2026-03-25 21:55 | SaProt-650M frozen + MLP | 0.7855 | ✅ |
 | V3-B | 2026-03-25 22:16 | SaProt-35M frozen + MLP | 0.7832 | ✅ |
-| V3-C | 2026-03-25 22:18 | SaProt-650M-4bit frozen | — | 🔧 재실행 |
-| V4-D | 2026-03-26 (Epoch 1 only) | SaProt-35M + LoRA (Val r=0.5410 @ ep1) | TBD | ⏳ Colab 재실행 |
-| V4-E | 예정 | SaProt-650M + LoRA | TBD | ⏳ |
+| V3-C | 2026-03-26 | SaProt-650M-4bit frozen | **0.7914** (val 0.8016) | ✅ |
+| V4-D | 2026-03-26 (Epoch 1 only) | SaProt-35M + LoRA (Val r=0.5410 @ ep1) | TBD | ⏳ Kaggle 재실행 예정 |
+| V4-E | 2026-03-26~27 (Epoch 36에서 중단) | SaProt-650M + LoRA (Val r ~0.8x @ ep36) | TBD | ❌ Colab GPU 한도 초과 |
 | V4-F | 예정 | SaProt-650M-4bit + LoRA | TBD | ⏳ |
 
 ---
@@ -156,7 +164,7 @@ LoraConfig(
 |------|---------|--------|--------|------|
 | SaProt-650M | 0.7855 | TBD | TBD | ~2.0 → ~2.2 GB |
 | SaProt-35M | 0.7832 | TBD | TBD | ~0.8 → ~1.0 GB |
-| SaProt-650M-4bit | — | TBD | TBD | ~0.8 → ~1.0 GB |
+| SaProt-650M-4bit | **0.7914** (val 0.8016) | TBD | TBD | ~0.8 → ~1.0 GB |
 
 ---
 
