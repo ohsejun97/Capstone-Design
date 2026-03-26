@@ -1,0 +1,16 @@
+{
+  "run_name": "SaProt-650M-8bit",
+  "encoder": "650M",
+  "quant": "8bit",
+  "lora": false,
+  "lora_r": null,
+  "prot_dim": 1280,
+  "timestamp": "2026-03-27T00:13:45.338851",
+  "test_pearson_r": 0.7812207341194153,
+  "test_p_value": 0.0,
+  "best_val_r": 0.7950798273086548,
+  "epochs_trained": 50,
+  "train_time_sec": 61.2,
+  "n_test": 6012,
+  "n_train": 21039
+}

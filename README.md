@@ -1,220 +1,157 @@
-# [Capstone Project] Agentic FusionDTI: 저사양 환경을 위한 지능형 신약 재창출 플랫폼
+# Lightweight Bio-AI Agent System for Drug–Target Interaction Analysis
+
+> **캡스톤 디자인 프로젝트**
+> "경량화된 DTI 모델과 구조 정보 도구를 Agent AI로 통합하여, 자연어 기반 약물-표적 상호작용 분석 시스템 구축"
+
+---
 
 ## 1. 프로젝트 개요
 
-본 프로젝트는 최신 단백질 언어 모델 **SaProt**을 경량화하여, 보급형 GPU(GTX 1650, 4GB)에서도 실시간 **약물-표적 상호작용(DTI)** 예측이 가능한 지능형 플랫폼을 구축하는 것을 목표로 한다.
+기존 DTI(Drug–Target Interaction) 분석 도구는 **standalone 모델**로, 단순 수치 예측에 그친다.
+
+본 프로젝트는 이를 **Agent AI 기반 시스템**으로 재구성하여:
+
+- 자연어 질문 → 자동 도구 선택 → 결과 + 구조 설명까지 End-to-End 제공
+- 경량화 / 양자화된 SaProt을 **실시간 호출 가능한 DTI Tool**로 통합
+- AlphaFold DB(단백질 3D 구조) + RDKit(리간드 3D 구조)까지 연동
 
 ---
 
-## 2. 핵심 가설
+## 2. 핵심 연구 질문
 
-> **"SaProt-650M 대비 SaProt-35M(경량 백본) 또는 4-bit 양자화 모델이**
-> **Pearson r 기준 90% 이상을 유지하면서, VRAM 사용량을 80% 이상 줄일 수 있는가?"**
+> **"SaProt-650M full-precision 대비, 경량 백본(35M)과 양자화(4-bit / 8-bit)가**
+> **동등한 DTI 예측 성능을 유지하면서 Agent tool로 실시간 호출 가능한가?"**
 
-검증 벤치마크: DAVIS 데이터셋 (연속 pKd 회귀, 30,056 쌍)
-
----
-
-## 3. 기존 방법 대비 차별점
-
-### DeepPurpose 표준 방식 (기존)
-
-```
-SMILES ──→ [MPNN 약물 인코더  ]  ─┐
-                                   ├──→ [결합 레이어] → pKd
-AA서열 ──→ [CNN  단백질 인코더]  ─┘
-          ↑___________________________↑
-              전체를 DAVIS로 end-to-end 학습
-```
-
-- 약물·단백질 인코더 + 헤드를 **처음부터 DAVIS로 전부 학습**
-- 사전학습 모델(`MPNN_CNN_DAVIS`) 제공, 바로 사용 시 Pearson r ≈ 0.88
-- 단점: 단순한 분자 지문/CNN 인코더 → 단백질 구조 정보 미반영
-
-### 본 연구 방식 (SaProt 기반)
-
-```
-SMILES ──→ [Morgan FP (2048-bit)] ──────────────────────┐
-                                                         ├──→ [DTI MLP 헤드] → pKd
-AA서열 ──→ [SA 토큰 변환] → [SaProt (구조 인식 PLM)] ───┘
-                                    ↑
-                        아미노산 + FoldSeek 3Di 구조 정보
-```
-
-- **SaProt**: 아미노산 서열 + 3D 구조 정보(SA 토큰)를 함께 인코딩하는 단백질 언어 모델
-- 단백질 인코더를 frozen 상태로 고정 → 작은 DTI 헤드만 DAVIS로 학습
-- GTX 1650(4GB)에서 학습 가능, 헤드 학습 시간 ~1분
+- 검증 데이터: DAVIS (연속 pKd 회귀, 30,056 쌍)
+- 평가 지표: Pearson r, VRAM 사용량, 추론 속도(latency)
 
 ---
 
-## 4. 전체 파이프라인
+## 3. 시스템 구조
 
-```mermaid
-graph TD
-    A[사용자 자연어 쿼리] --> B(smolagents + Gemini API)
-    B --> C{Tool 호출}
+```
+사용자 자연어 쿼리
+        ↓
+  Agent AI (LLM Orchestrator)
+        ↓
+  ┌─────────────────────────────────────┐
+  │  Tool 1: DTI Prediction             │  ← SaProt (양자화) + MLP 헤드
+  │  Tool 2: Protein Structure          │  ← AlphaFold DB 조회
+  │  Tool 3: Ligand Structure           │  ← RDKit 3D conformer 생성
+  │  Tool 4: Explanation / Summary      │  ← LLM 기반 결과 해석
+  └─────────────────────────────────────┘
+        ↓
+  최종 응답 (예측 수치 + 구조 설명)
+```
 
-    subgraph "데이터 입력"
-        C --> D[SMILES 약물 구조]
-        C --> E[아미노산 서열 / AlphaFold PDB]
-    end
+### Tool 1: DTI Prediction Tool 내부 구조
 
-    subgraph "인코딩"
-        D --> F[Morgan Fingerprint<br/>2048-bit]
-        E --> G[SA 토큰 변환<br/>AA + FoldSeek 3Di]
-        G --> H[SaProt 단백질 언어 모델<br/>35M / 650M]
-    end
-
-    subgraph "경량화 비교 실험"
-        H --> I[SaProt-650M<br/>기준 모델]
-        H --> J[SaProt-35M<br/>경량 모델 ×18↓]
-        H --> K[SaProt-650M 4-bit<br/>양자화 모델]
-    end
-
-    F --> L[DTI MLP 헤드]
-    I --> L
-    J --> L
-    K --> L
-    L --> M[pKd 예측값]
-
-    M --> N{Pearson r 비교}
-    N -->|r ≥ 기준×0.9| O[✅ 경량화 성공<br/>GTX 1650 실시간 배포]
-    N -->|r < 기준×0.9| P[❌ 성능 미달]
-
-    O --> Q[Streamlit UI / FastAPI]
-    Q --> R[Docker 배포]
+```
+SMILES  → Morgan Fingerprint (2048-bit)      ─┐
+                                               ├→ DTI MLP 헤드 → pKd
+AA서열  → SA 토큰 → SaProt (frozen, 양자화)  ─┘
+              ↑
+     AA문자 + FoldSeek 3Di 구조 토큰 쌍
 ```
 
 ---
 
-## 5. 현재 진행 상태
+## 4. Phase 1 완료 — DTI Tool 경량화 실험 결과
 
-> **📍 Phase 1 진행 중 — Reference Score 확보 (목표: r ≥ 0.8)**
+> SaProt frozen + MLP 헤드를 DAVIS로 학습 후 경량 백본 / 양자화 수준별 성능 비교
 
-| 버전 | 방법 | Pearson r | 상태 |
-|------|------|----------|------|
-| V1 | SaProt-650M (랜덤 헤드, CPU) | 0.030 | ❌ 입력 오류 |
-| V2 | SPRINT + panspecies-dti 가중치 | 0.141 | ❌ OOD 문제 |
-| **V3-650M** | **SaProt-650M frozen + MLP 헤드** | **0.7855** | ✅ 현재 최고 |
-| **V3-35M** | **SaProt-35M frozen + MLP 헤드** | **0.7832** | ✅ 650M 대비 -0.0023 |
-| V3-4bit | SaProt-650M 4-bit + MLP 헤드 | — | 🔧 재실행 예정 |
+| 모델 | 파라미터 | 양자화 | Test Pearson r | Val Pearson r | 학습 시간 |
+|------|---------|--------|---------------|--------------|---------|
+| SaProt-650M | 652M | none (FP16) | 0.7855 | 0.7990 | 59초 |
+| SaProt-35M | 34M | none (FP16) | 0.7832 | 0.7872 | 55초 |
+| SaProt-650M-8bit | 652M | INT8 | 0.7812 | 0.7951 | 62초 |
+| **SaProt-650M-4bit** | 652M | **NF4 4-bit** | **0.7914** | **0.8016** | 198초 |
 
-**핵심 발견:** 35M 모델이 파라미터 약 18배 적음에도 650M 대비 성능 차이 0.0023 (사실상 동일)
+### 핵심 발견
 
----
-
-## 6. r ≥ 0.9 달성 전략 (향후 연구 방향)
-
-현재 frozen 방식의 한계: SaProt이 단백질-약물 상호작용을 모른 채로 특징만 추출.
-
-### 단기 (Phase 1 완료 목표)
-
-| 방법 | 예상 효과 | VRAM 증가 |
-|------|---------|----------|
-| **LoRA 파인튜닝** (권장) | r ≈ 0.85~0.92 | ~200MB |
-| 에폭 확대 + LR 스케줄 조정 | r ≈ 0.80~0.82 | 없음 |
-| SaProt 마지막 레이어 일부 unfreeze | r ≈ 0.83~0.88 | ~500MB |
-
-**LoRA 전략 상세:**
-```
-SaProt 어텐션 레이어에 rank-16 LoRA 어댑터 추가
-→ 추가 파라미터: ~2M개 (전체의 0.3%)
-→ SaProt이 DAVIS DTI 태스크에 맞게 적응
-→ 35M + LoRA가 frozen 650M을 넘어설 수 있음
-```
-
-### 장기 (Phase 2~3)
-
-```
-Phase 2:  LoRA-35M vs LoRA-650M vs 4bit 비교 → 경량화 트레이드오프 분석
-Phase 3:  smolagents + Gemini API 에이전트 연동 → 자연어 DTI 예측
-Phase 4:  Streamlit UI + FastAPI 백엔드
-Phase 5:  Docker 이미지 배포
-```
+- **경량 백본:** SaProt-35M (파라미터 19배↓)이 650M 대비 성능 차이 **0.0023** — 사실상 동일
+- **양자화:** 4-bit NF4가 FP16 대비 성능 **소폭 향상** (val r: 0.7990 → 0.8016)
+- **결론:** 경량 백본 또는 4-bit 양자화 모델이 Agent Tool로 실시간 사용 가능한 수준 확인
 
 ---
 
-## 7. 실행 방법
+## 5. Phase 2 계획 — Agent 시스템 구현
 
-### 로컬 (frozen, 빠름 ~1분)
+| 단계 | 내용 | 상태 |
+|------|------|------|
+| 2-1 | DTI Tool 모듈화 (양자화 모델 wrapping) | 예정 |
+| 2-2 | Protein Tool — AlphaFold DB API 연동 | 예정 |
+| 2-3 | Ligand Tool — RDKit 3D conformer 생성 | 예정 |
+| 2-4 | Agent 구현 (smolagents / LangChain) | 예정 |
+| 2-5 | End-to-End 데모 (자연어 쿼리 → 결과) | 예정 |
+
+---
+
+## 6. 실행 방법
+
+### 환경 설치
 
 ```bash
-# 환경 설치
 bash setup_env.sh
-
-# frozen 모드 (임베딩 캐시 → 헤드만 학습)
-python train_dti_saprot.py --encoder 650M          # 기준 모델 (r=0.7855)
-python train_dti_saprot.py --encoder 35M            # 경량 모델 (r=0.7832)
-python train_dti_saprot.py --encoder 650M --quant 4bit  # 양자화
+# Conda 환경: bioinfo (Python 3.10)
 ```
 
-### Google Colab T4 (LoRA, 권장)
-
-> GTX 1650에는 Tensor Core가 없어 LoRA 학습이 에폭당 ~2.5시간 소요.
-> Colab T4는 에폭당 ~10분으로 대폭 단축.
-
-**실행:** `notebooks/train_lora_colab.ipynb` 열기 → T4 런타임 선택 → 순서대로 실행
+### DTI Tool 학습 (Phase 1)
 
 ```bash
-# LoRA 파인튜닝 (Colab 환경)
-python train_dti_saprot.py --encoder 35M --lora          # 핵심 실험 (0.55M params)
-python train_dti_saprot.py --encoder 650M --lora         # 풀 모델 비교
+python train_dti_saprot.py --encoder 650M                    # FP16 기준 (r=0.7855)
+python train_dti_saprot.py --encoder 35M                     # 경량 백본 (r=0.7832)
+python train_dti_saprot.py --encoder 650M --quant 8bit       # INT8 양자화 (r=0.7812)
+python train_dti_saprot.py --encoder 650M --quant 4bit       # NF4 4-bit (r=0.7914)
 ```
 
-### 주요 인자
+### 결과 시각화
 
-| 인자 | 옵션 | 기본값 |
-|------|------|--------|
-| `--encoder` | `650M`, `35M` | `650M` |
-| `--quant` | `none`, `4bit`, `8bit` | `none` |
-| `--lora` | flag | off |
-| `--lora_r` | 정수 | `16` |
-| `--epochs` | 정수 | `50` |
-| `--patience` | 정수 | `10` |
+```bash
+python experiments/visualize_results.py
+# 출력: outputs/figures/ (학습 곡선, 산점도, 모델 비교 바 차트)
+```
 
 ---
 
-## 8. 기술 스택
+## 7. 기술 스택
 
 | 분류 | 스택 |
 |------|------|
 | 단백질 인코더 | SaProt (35M / 650M AF2), SA 토큰 (AA + FoldSeek 3Di) |
 | 약물 인코딩 | RDKit Morgan Fingerprint (radius=2, nBits=2048) |
-| 경량화 | bitsandbytes (4-bit NF4 양자화), LoRA (예정) |
-| ML 프레임워크 | PyTorch, Hugging Face Transformers |
-| 에이전트 | smolagents, Gemini 1.5 Flash API |
-| 프론트/백엔드 | Streamlit, FastAPI |
-| 인프라 | Docker, WSL2, Linux (32코어) |
-| 통계 | Pearson r, CI (Concordance Index) |
-
-## 9. SA 토큰 포맷
-
-SaProt의 핵심 입력 포맷: **아미노산(대문자) + FoldSeek 3Di 구조 토큰(소문자)** 쌍
-
-```python
-# 구조 정보 없는 경우 '#' 대체
-sa_seq = "".join(aa + "#" for aa in aa_seq)
-# 예: "MET" → "M#E#T#"  (토큰: ["M#", "E#", "T#"])
-
-# 구조 정보 있는 경우
-sa_seq = "".join(aa.upper() + di.lower() for aa, di in zip(aa_seq, foldseek_3di))
-# 예: "MaEvKc..."  (토큰: ["Ma", "Ev", "Kc"])
-```
-
-어휘: 21 AA × 21 3Di = 441 토큰 + 5 특수 토큰 = **446 총 어휘**
+| 경량화 / 양자화 | bitsandbytes (NF4 4-bit, INT8) |
+| ML 프레임워크 | PyTorch 2.6, Hugging Face Transformers |
+| Agent | smolagents (Hugging Face) |
+| 구조 DB | AlphaFold DB (단백질 3D), RDKit (리간드 3D) |
+| 프론트/백엔드 | Streamlit, FastAPI (예정) |
+| 인프라 | Docker, WSL2, Linux 32코어 |
 
 ---
 
-## 10. 환경 주의사항
+## 8. 실험 히스토리 (전체)
+
+| 버전 | 방법 | Pearson r | 상태 |
+|------|------|----------|------|
+| V1 | SaProt-650M 랜덤 헤드 (CPU) | 0.030 | ❌ 입력 오류 |
+| V2 | SPRINT + MERGED 가중치 | 0.141 | ❌ OOD 문제 |
+| V3-A | SaProt-650M frozen + MLP | 0.7855 | ✅ |
+| V3-B | SaProt-35M frozen + MLP | 0.7832 | ✅ |
+| V3-C | SaProt-650M-8bit frozen + MLP | 0.7812 | ✅ |
+| V3-D | SaProt-650M-4bit frozen + MLP | **0.7914** | ✅ |
+
+---
+
+## 9. 환경 주의사항
 
 - `torch >= 2.6.0` 필수 (CVE-2025-32434 대응)
-- `torchvision`, `torchaudio` 설치 금지 (충돌)
-- GPU: GTX 1650 SUPER (4GB, CUDA 12.6)
+- `torchvision`, `torchaudio` 설치 금지 (버전 충돌)
+- GPU: GTX 1650 SUPER (4GB VRAM, CUDA 12.6)
 - Conda 환경: `bioinfo` (Python 3.10)
 
 ---
 
-## 11. 실험 상세 기록
+## 10. 실험 상세 기록
 
 - [Phase 1 실험 일지](docs/PHASE1_EXPERIMENT_LOG.md)
 - [Phase 1 파이프라인 설계](docs/PHASE1_REFERENCE_PIPELINE.md)
