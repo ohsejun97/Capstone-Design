@@ -101,9 +101,9 @@ if args.dataset == "davis":
         path="./data", binary=False, convert_to_log=True
     )
 else:
-    print("[1] Loading KIBA (KIBA score)...")
+    print("[1] Loading KIBA (KIBA score, regression)...")
     X_drugs, X_targets, y = dp_dataset.load_process_KIBA(
-        path="./data", binary=False
+        path="./data", binary=False, threshold=9
     )
 
 y = np.array(y, dtype=np.float32)
@@ -189,7 +189,7 @@ tgt_indices    = np.array([tgt2idx[t] for t in X_targets])
 
 if not args.lora:
     # ── frozen 모드: 임베딩 캐시 ─────────────────────────────────────────────
-    cache_path = Path(f"./cache/prot_embs_{args.encoder}_{args.quant}.pt")
+    cache_path = Path(f"./cache/prot_embs_{args.dataset}_{args.encoder}_{args.quant}.pt")
     cache_path.parent.mkdir(exist_ok=True)
 
     if cache_path.exists():
