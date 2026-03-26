@@ -37,7 +37,7 @@ except ImportError:
     sys.exit("❌ pip install rdkit")
 
 try:
-    from DeepPurpose.dataset import load_process_DAVIS
+    import DeepPurpose.dataset as dp_dataset
 except ImportError:
     sys.exit("❌ pip install DeepPurpose")
 
@@ -45,16 +45,18 @@ except ImportError:
 # 인자 파싱
 # ══════════════════════════════════════════════════════════════════════════════
 parser = argparse.ArgumentParser(description="SaProt DTI Trainer")
+parser.add_argument("--dataset",    default="davis", choices=["davis", "kiba"],
+                    help="Training dataset (default: davis)")
 parser.add_argument("--encoder",    default="650M", choices=["650M", "35M"])
 parser.add_argument("--quant",      default="none", choices=["none", "8bit", "4bit"])
-parser.add_argument("--lora",       action="store_true", help="LoRA 파인튜닝 활성화")
-parser.add_argument("--lora_r",     type=int,   default=16,   help="LoRA rank")
-parser.add_argument("--lora_alpha", type=int,   default=32,   help="LoRA alpha")
+parser.add_argument("--lora",       action="store_true")
+parser.add_argument("--lora_r",     type=int,   default=16)
+parser.add_argument("--lora_alpha", type=int,   default=32)
 parser.add_argument("--epochs",     type=int,   default=50)
 parser.add_argument("--batch_size", type=int,   default=0,
-                    help="0=자동 (frozen:128, LoRA 650M:8, LoRA 35M:32)")
+                    help="0=auto (frozen:128, LoRA 650M:8, LoRA 35M:32)")
 parser.add_argument("--lr",         type=float, default=0.0,
-                    help="0=자동 (frozen:1e-3, LoRA:5e-5)")
+                    help="0=auto (frozen:1e-3, LoRA:5e-5)")
 parser.add_argument("--patience",   type=int,   default=10)
 parser.add_argument("--seed",       type=int,   default=42)
 args = parser.parse_args()
@@ -80,24 +82,32 @@ SAPROT_DIMS = {"650M": 1280, "35M": 480}
 run_name = f"SaProt-{args.encoder}"
 if args.quant != "none": run_name += f"-{args.quant}"
 if args.lora:            run_name += "-lora"
+run_name += f"-{args.dataset}"
 
 print("=" * 60)
 print(f"  DTI Training — {run_name}")
-print(f"  실행: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-print(f"  Device: {DEVICE} | Encoder: {args.encoder} | "
-      f"Quant: {args.quant} | LoRA: {args.lora}")
+print(f"  Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+print(f"  Device: {DEVICE} | Dataset: {args.dataset.upper()} | "
+      f"Encoder: {args.encoder} | Quant: {args.quant}")
 print(f"  batch={args.batch_size} | lr={args.lr}")
 print("=" * 60, "\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# [1] DAVIS 데이터 로드
+# [1] 데이터 로드
 # ══════════════════════════════════════════════════════════════════════════════
-print("[1] DAVIS 연속 pKd 데이터 로드...")
-X_drugs, X_targets, y = load_process_DAVIS(
-    path="./data", binary=False, convert_to_log=True
-)
+if args.dataset == "davis":
+    print("[1] Loading DAVIS (continuous pKd)...")
+    X_drugs, X_targets, y = dp_dataset.load_process_DAVIS(
+        path="./data", binary=False, convert_to_log=True
+    )
+else:
+    print("[1] Loading KIBA (KIBA score)...")
+    X_drugs, X_targets, y = dp_dataset.load_process_KIBA(
+        path="./data", binary=False
+    )
+
 y = np.array(y, dtype=np.float32)
-print(f"    전체: {len(y):,}쌍  |  pKd: {y.min():.2f} ~ {y.max():.2f}")
+print(f"    Total: {len(y):,} pairs  |  target: {y.min():.2f} ~ {y.max():.2f}")
 
 rng    = np.random.default_rng(args.seed)
 idx    = rng.permutation(len(y))
@@ -477,6 +487,7 @@ if args.lora:
 
 result = {
     "run_name":       run_name,
+    "dataset":        args.dataset,
     "encoder":        args.encoder,
     "quant":          args.quant,
     "lora":           args.lora,
