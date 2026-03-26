@@ -1,0 +1,14 @@
+{
+  "run_name": "SaProt-650M",
+  "encoder": "650M",
+  "quant": "none",
+  "prot_dim": 1280,
+  "timestamp": "2026-03-25T22:16:11.708957",
+  "test_pearson_r": 0.785521388053894,
+  "test_p_value": 0.0,
+  "best_val_r": 0.7990273237228394,
+  "epochs_trained": 50,
+  "train_time_sec": 58.7,
+  "n_test": 6012,
+  "n_train": 21039
+}
