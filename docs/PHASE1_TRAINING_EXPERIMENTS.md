@@ -1,8 +1,8 @@
 # Phase 1 학습 실험 보고서 — SaProt DTI Tool 경량화 비교
 
-> **작성일시:** 2026년 3월 27일 KST
-> **목표:** SaProt frozen + MLP 헤드를 DAVIS로 학습 후, 경량 백본 / 양자화 수준별 성능 비교
-> **현재 상태:** ✅ 완료 — 4개 모델 비교 완료, DTI Tool 후보 확정
+> **작성일시:** 2026년 3월 27일 KST (최종 업데이트)
+> **목표:** SaProt frozen + MLP 헤드를 DAVIS/KIBA로 학습 후, 경량 백본 / 양자화 수준별 성능 비교 및 교차 데이터셋 일반화 검증
+> **현재 상태:** ✅ 완료 — DAVIS 4모델 + KIBA 교차검증 완료, DTI Tool 확정
 
 ---
 
@@ -16,7 +16,7 @@
 | Python | 3.10.20 (Conda: `bioinfo`) |
 | PyTorch | 2.6.0+cu124 |
 | Transformers | 5.3.0 |
-| 데이터셋 | DAVIS (DeepPurpose, 연속 pKd) — 30,056 쌍 |
+| 데이터셋 | DAVIS (연속 pKd, 30,056 쌍) + KIBA (KIBA score, 118,254 쌍) |
 
 ---
 
@@ -110,6 +110,25 @@ regressor: Linear(512→256) → GELU → Dropout(0.1) → Linear(256→64) → 
 
 > **LoRA 실험 (V4):** Colab GPU 한도 초과 + 로컬 GTX 1650 속도 한계(epoch당 2.5h)로 중단.
 > 프로젝트 방향을 "모델 파인튜닝" → "Agent 시스템 구축"으로 전환하여 LoRA 실험은 향후 과제로 남김.
+
+---
+
+---
+
+## KIBA 교차 검증 결과 (Cross-Dataset Generalization)
+
+> "DAVIS에서 잘 된 게 우연인가?" → KIBA 독립 검증으로 확인
+
+| 데이터셋 | 쌍 수 | Test Pearson r | Val r | 학습 시간 |
+|---------|------|---------------|-------|---------|
+| DAVIS | 30,056 | 0.7914 | 0.8016 | 198초 |
+| **KIBA** | **118,254** | **0.7994** | **0.8106** | 206초 |
+
+**결론:** KIBA (완전히 다른 데이터, 4배 큰 규모)에서도 동등 이상의 성능 → **우연이 아님, 모델 일반화 확인**
+
+- 동일 파이프라인 (SaProt-650M-4bit frozen + MLP) 그대로 적용
+- KIBA가 DAVIS보다 오히려 소폭 높음 → 더 많은 데이터로 헤드 학습이 유리
+- 두 데이터셋 모두 val r ≥ 0.80 달성
 
 ---
 

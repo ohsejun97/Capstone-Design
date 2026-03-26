@@ -1,5 +1,0 @@
-Model,Quant,Pearson r,RMSE,MAE,CI
-SaProt-35M,none,0.7832,0.5709,0.324,0.8602
-SaProt-650M,none,0.7855,0.5686,0.3169,0.862
-SaProt-650M-4bit,4bit,0.7914,0.5614,0.3142,0.8679
-SaProt-650M-8bit,8bit,0.7812,0.5734,0.3229,0.8577
