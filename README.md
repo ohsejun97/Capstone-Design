@@ -26,41 +26,48 @@ The agent synthesizes these outputs into a human-readable response with structur
 Understanding how DAVIS, KIBA, and AlphaFold DB fit together is key to understanding this project.
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        DATA SOURCES                                 │
-│                                                                     │
-│  ┌─────────────┐    ┌─────────────┐    ┌──────────────────────┐    │
-│  │    DAVIS    │    │    KIBA     │    │    AlphaFold DB      │    │
-│  │             │    │             │    │                      │    │
-│  │ Drug+Protein│    │ Drug+Protein│    │ Protein 3D Structure │    │
-│  │ → pKd score │    │ → KIBA score│    │ → PDB coordinates    │    │
-│  │ ~30K pairs  │    │ ~118K pairs │    │ ~200M proteins       │    │
-│  └──────┬──────┘    └──────┬──────┘    └──────────┬───────────┘    │
-│         │                  │                       │                │
-│     [Training]         [Validation]           [Inference]          │
-│         │                  │                       │                │
-└─────────┼──────────────────┼───────────────────────┼───────────────┘
-          │                  │                       │
-          ▼                  ▼                       ▼
-   ┌─────────────┐    ┌─────────────┐    ┌──────────────────────┐
-   │  DTI Tool   │    │  DTI Tool   │    │   Protein Tool       │
-   │  (trained)  │───▶│ (validated) │    │  (API lookup)        │
-   └──────┬──────┘    └─────────────┘    └──────────┬───────────┘
-          │                                          │
-          └──────────────────┬───────────────────────┘
-                             │
-                    ┌────────▼────────┐
-                    │   Agent AI      │
-                    │ (Orchestrator)  │
-                    └────────┬────────┘
-                             │
-                    ┌────────▼────────┐
-                    │  Natural Lang.  │
-                    │    Response     │
-                    └─────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                             DATA SOURCES                                 │
+│                                                                          │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐   │
+│  │      DAVIS       │  │      KIBA        │  │    AlphaFold DB      │   │
+│  │                  │  │                  │  │                      │   │
+│  │ Drug + Protein   │  │ Drug + Protein   │  │ Protein 3D Structure │   │
+│  │ → pKd score      │  │ → KIBA score     │  │ → PDB coordinates    │   │
+│  │ ~30K pairs       │  │ ~118K pairs      │  │ ~200M proteins       │   │
+│  │                  │  │                  │  │                      │   │
+│  │ [1] Train DTI    │  │ [1] Validate     │  │ [Inference only]     │   │
+│  │ [2] Candidate DB │  │ [2] Candidate DB │  │  Protein 3D lookup   │   │
+│  └────────┬─────────┘  └────────┬─────────┘  └──────────┬───────────┘   │
+└───────────┼────────────────────┼───────────────────────┼───────────────┘
+            │ Training           │ Cross-validation       │ Structure
+            ▼                    ▼                        ▼
+     ┌─────────────────────────────┐              ┌───────────────┐
+     │         DTI Tool            │              │ Protein Tool  │
+     │  SaProt-650M-4bit + MLP     │              │  AlphaFold DB │
+     │  (trained on DAVIS/KIBA)    │              │  API lookup   │
+     └──────────────┬──────────────┘              └───────┬───────┘
+                    │                                      │
+     At inference:  │                                      │
+     Search DAVIS+KIBA for drug candidates,               │
+     predict pKd for each → rank by affinity              │
+                    │                                      │
+                    └────────────────┬─────────────────────┘
+                                     │
+                            ┌────────▼────────┐
+                            │   Agent AI      │
+                            │ (Orchestrator)  │
+                            └────────┬────────┘
+                                     │
+                            ┌────────▼────────────────────┐
+                            │  Final Response              │
+                            │  "Top candidates: ...        │
+                            │   Predicted pKd: 8.3         │
+                            │   3D structure: [PDB]..."    │
+                            └──────────────────────────────┘
 ```
 
-### DAVIS — Training Benchmark
+### DAVIS — Training Benchmark & Candidate Database
 
 | Property | Value |
 |----------|-------|
@@ -68,11 +75,11 @@ Understanding how DAVIS, KIBA, and AlphaFold DB fit together is key to understan
 | Size | ~30,000 drug-protein pairs |
 | Affinity metric | Kd (dissociation constant) → converted to pKd = -log10(Kd) |
 | Proteins | 442 kinases |
-| Role in this project | **Train and evaluate the DTI model** |
+| Role in this project | **Train/evaluate the DTI model + searchable candidate pool at inference** |
 
-DAVIS is where the DTI model learns what "strong binding" looks like. It provides labeled examples of (drug, protein, affinity) triples that the model uses to learn the relationship between molecular structure and binding strength.
+DAVIS serves two purposes: (1) it trains the DTI model to learn what "strong binding" looks like; (2) at inference time, when a user queries a target protein, the agent can search DAVIS to find known drug candidates and rank them by predicted pKd.
 
-### KIBA — Generalization Validation
+### KIBA — Generalization Validation & Extended Candidate Database
 
 | Property | Value |
 |----------|-------|
@@ -80,9 +87,9 @@ DAVIS is where the DTI model learns what "strong binding" looks like. It provide
 | Size | ~118,000 drug-protein pairs |
 | Affinity metric | KIBA score (composite of Ki, Kd, IC50) |
 | Proteins | 229 kinases |
-| Role in this project | **Validate that DAVIS results are not coincidental** |
+| Role in this project | **Cross-dataset validation + 4× larger candidate pool at inference** |
 
-After training on DAVIS, we re-train and evaluate on KIBA independently. If the model performs well on both, it confirms the approach generalizes across datasets and experimental settings — not just overfitting to one benchmark.
+After training on DAVIS, we independently re-train and evaluate on KIBA to confirm generalization. KIBA is **not** a source of 3D protein structures — that role belongs exclusively to AlphaFold DB. At inference, KIBA extends the candidate search space with 118K drug-protein pairs across a wider range of kinases.
 
 ### AlphaFold DB — Structural Knowledge Base
 
@@ -159,7 +166,9 @@ The protein encoder (SaProt) is frozen — only the small MLP head (~2.6M params
 
 ---
 
-## Phase 1 Results — DTI Tool Benchmarking (DAVIS)
+## Phase 1 Results — DTI Tool Benchmarking
+
+### DAVIS (Primary Benchmark)
 
 > SaProt frozen + MLP head trained on DAVIS. Comparing backbone size and quantization level.
 
@@ -172,8 +181,19 @@ The protein encoder (SaProt) is frozen — only the small MLP head (~2.6M params
 
 **Key findings:**
 - SaProt-35M (19× fewer params) achieves within **0.002 Pearson r** of 650M — effectively identical
-- NF4 4-bit quantization **does not degrade performance** — slightly improves it (regularization effect)
+- NF4 4-bit quantization **maintains performance** while reducing VRAM from ~2.5GB to ~0.8GB (regularization effect)
 - All models: CI > 0.86 — correctly ranks drug binding strength 86% of the time
+
+### KIBA (Cross-Dataset Generalization)
+
+> Same pipeline (SaProt-650M-4bit frozen + MLP head), independently trained and evaluated on KIBA.
+
+| Dataset | Pairs | Test Pearson r | Val r | Train Time |
+|---------|-------|---------------|-------|-----------|
+| DAVIS | 30,056 | 0.7914 | 0.8016 | 198s |
+| **KIBA** | **118,254** | **0.7994** | **0.8106** | 206s |
+
+**→ DAVIS results are not coincidental.** Identical pipeline on a completely different dataset (4× larger, different affinity metric) achieves equivalent performance. Both datasets reach val r ≥ 0.80.
 
 **→ 4-bit quantized SaProt confirmed as viable real-time Agent Tool on GTX 1650 (4GB VRAM)**
 
@@ -182,8 +202,8 @@ The protein encoder (SaProt) is frozen — only the small MLP head (~2.6M params
 ## Roadmap
 
 ```
-Phase 1  ✅  DAVIS benchmark — DTI model quantization comparison
-Phase 2a ⏳  KIBA benchmark  — Cross-dataset generalization validation
+Phase 1  ✅  DAVIS benchmark — DTI model quantization comparison (4 models)
+Phase 2a ✅  KIBA benchmark  — Cross-dataset generalization validation (r=0.7994)
 Phase 2b ⏳  Protein Tool    — AlphaFold DB API integration
 Phase 2c ⏳  Ligand Tool     — RDKit 3D conformer generation
 Phase 3  ⏳  Agent           — smolagents orchestration layer
@@ -202,7 +222,7 @@ Phase 4  ⏳  Demo            — End-to-end natural language interface
 | V3-B | SaProt-35M frozen + MLP (DAVIS) | 0.7832 | ✅ |
 | V3-C | SaProt-650M-8bit frozen + MLP (DAVIS) | 0.7812 | ✅ |
 | V3-D | SaProt-650M-4bit frozen + MLP (DAVIS) | **0.7914** | ✅ |
-| V4 | KIBA cross-validation | TBD | ⏳ |
+| V4 | SaProt-650M-4bit frozen + MLP (KIBA) | **0.7994** | ✅ |
 
 ---
 
