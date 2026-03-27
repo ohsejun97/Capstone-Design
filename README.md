@@ -118,23 +118,46 @@ This system is optimized for **known drugs interacting with human protein target
 | Protein families | Human kinases — DAVIS (442 kinases) + KIBA (229 kinases) |
 | Affinity metric | pKd / KIBA score (continuous regression) |
 
-**Current limitations:**
+**Known limitations:**
 
-- **Viral / bacterial targets** — Training data (DAVIS, KIBA) covers human kinases only. Queries like "Remdesivir vs. SARS-CoV-2 RdRp" are out-of-distribution and unreliable.
-- **Non-kinase human proteins** — GPCR, protease, nuclear receptor families are underrepresented in DAVIS/KIBA. Predictions may be less accurate.
-- **Korean / non-English drug names** — The LLM orchestrator must translate to an English generic name before calling Tool 4 (e.g., "비아그라" → "Sildenafil").
-- **Vague target descriptions** — Inputs like "콜레스테롤 합성 효소" require the LLM to map to a gene name (HMGCR) before Tool 5 can resolve it.
+**[Model] SaProt 3D structure tokens not yet utilized**
+SaProt's core design encodes both amino acid sequence and FoldSeek 3Di structural tokens (`"MaEvKc..."`). This project currently uses `'#'` placeholder tokens (`"M#E#T#..."`), meaning SaProt is operating without its structural advantage. This is the primary reason the current DTI performance (Pearson r ≈ 0.79) falls below SOTA methods such as DeepPurpose MPNN_CNN (r ≈ 0.89) and GraphDTA (r ≈ 0.88). The next planned experiment is to apply FoldSeek 3Di tokens using the AlphaFold structures already retrieved by Tool 2.
+
+**[Model] Drug encoder asymmetry**
+The protein encoder (SaProt, 650M params) is orders of magnitude more expressive than the drug encoder (Morgan Fingerprint, 2048-bit binary vector). Morgan FP is a fixed structural descriptor that does not learn from data. Replacing it with a graph neural network (e.g., MPNN) would better match the protein encoder's capacity.
+
+**[Data] Human kinase-centric training data**
+DAVIS and KIBA cover human kinases exclusively (442 and 229 kinases respectively). Predictions for viral/bacterial targets, GPCRs, proteases, and nuclear receptors are out-of-distribution and should not be trusted.
+
+**[Usability] Non-English or vague inputs**
+The LLM orchestrator must translate non-English drug names (e.g., "비아그라" → "Sildenafil") and vague target descriptions (e.g., "콜레스테롤 합성 효소" → gene name "HMGCR") before Tool 4/5 can resolve them. This depends on the LLM's domain knowledge.
 
 ---
 
-## Future Work
+## Roadmap
 
-| Direction | Description | Impact |
-|-----------|-------------|--------|
-| **BindingDB expansion** | Add ~2.3M drug-target pairs covering viral, bacterial, and non-kinase targets | Resolves viral target limitation |
-| **FoldSeek 3Di tokens** | Replace `#` placeholders with real structural tokens from AlphaFold + FoldSeek | Potential DTI accuracy improvement |
-| **smolagents orchestration** | End-to-end natural language query → multi-tool pipeline | Core Agent demo |
-| **Docker deployment** | Containerize full stack for reproducible demo | Portability |
+| Phase | Task | Status |
+|-------|------|--------|
+| Phase 1 | DAVIS benchmark — 4 model variants | ✅ Complete |
+| Phase 2a | KIBA cross-dataset validation | ✅ Complete |
+| Phase 2b | Agent Tools 1–5 implementation | ✅ Complete |
+| **Phase 3** | **FoldSeek 3Di token integration + re-evaluation** | **🔄 Next** |
+| Phase 4 | smolagents orchestration + end-to-end demo | ⏳ Planned |
+| Phase 5 | BindingDB expansion (viral/non-kinase targets) | ⏳ Planned |
+
+**Phase 3 detail — FoldSeek 3Di integration:**
+```
+AlphaFold PDB (Tool 2, already working)
+      ↓
+FoldSeek → per-residue 3Di tokens
+      ↓
+aa_to_sa(): "M#E#T#..." → "MaEvKc..."
+      ↓
+Re-embed DAVIS/KIBA proteins → retrain MLP head (~60s)
+      ↓
+Compare r: '#' baseline vs real 3Di
+```
+Expected outcome: performance improvement consistent with SaProt paper findings, or a concrete ablation result that quantifies the structural token contribution.
 
 ---
 
