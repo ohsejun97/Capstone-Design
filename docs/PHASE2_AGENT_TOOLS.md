@@ -95,10 +95,24 @@ Tool 3 완료 후 Agent 오케스트레이션 단계에서 진행 예정.
 
 ## 다음 단계
 
-### Tool 3: RDKit 3D Ligand Tool (예정)
-- 입력: SMILES 문자열 (예: `"CC1=CC=CC=C1"`)
-- 처리: RDKit → 3D conformer 생성 (ETKDG 알고리즘) → 에너지 최적화
-- 출력: SDF/PDB 파일 경로 + 분자 기본 정보 (분자량, formula, n_atoms)
+### Tool 3: RDKit 3D Ligand Tool ✅ 완료
+
+> **파일:** `tools/rdkit_tool.py` | **완료일:** 2026-03-27
+
+| 항목 | 내용 |
+|------|------|
+| **입력** | SMILES 문자열 (예: `"CC(=O)Oc1ccccc1C(=O)O"`) |
+| **처리** | ETKDGv3 embedding → MMFF94 force field 최적화 |
+| **출력** | formula, mol_weight, n_atoms, n_bonds, n_rotatable_bonds, sdf_path |
+| **캐시** | `cache/ligands/{smiles_hash}.sdf` |
+
+**테스트 결과 (Aspirin):**
+```
+Formula : C9H8O4  |  MW: 180.159 g/mol
+Atoms   : 21  |  Bonds: 21  |  Rotatable: 2
+Status  : optimized
+```
+Cache hit/miss 모두 확인 ✅
 
 ### Agent 오케스트레이션 (예정)
 - Framework: smolagents
@@ -112,11 +126,13 @@ Tool 3 완료 후 Agent 오케스트레이션 단계에서 진행 예정.
 ```
 tools/
 ├── alphafold_tool.py   ✅  Tool 2: AlphaFold DB API
-├── rdkit_tool.py       🔄  Tool 3: RDKit 3D Ligand (예정)
+├── rdkit_tool.py       ✅  Tool 3: RDKit 3D Ligand
 └── dti_tool.py         🔄  Tool 1: DTI 추론 래핑 (예정)
 
 cache/
-└── alphafold/
-    ├── P00533.pdb
-    └── P00533_meta.txt
+├── alphafold/
+│   ├── P00533.pdb
+│   └── P00533_meta.txt
+└── ligands/
+    └── {smiles_hash}.sdf
 ```
