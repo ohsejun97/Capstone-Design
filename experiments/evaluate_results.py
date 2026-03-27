@@ -11,8 +11,8 @@ Metrics:
 
 Outputs:
   outputs/evaluation_metrics.csv
-  outputs/figures/04_metrics_comparison.png  (DAVIS models)
-  outputs/figures/06_kiba_metrics.png        (KIBA model, if available)
+  outputs/figures/04_metrics_comparison.png  (DAVIS models, 2x2 multi-metric)
+  outputs/figures/07_kiba_metrics.png        (KIBA multi-model, 2x2 multi-metric)
 
 Usage:
   python experiments/evaluate_results.py
@@ -30,11 +30,13 @@ OUT_DIR     = Path(__file__).parent.parent / "outputs" / "figures"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 COLORS = {
-    "SaProt-650M":           "#4C72B0",
-    "SaProt-35M":            "#DD8452",
-    "SaProt-650M-4bit":      "#55A868",
-    "SaProt-650M-8bit":      "#C44E52",
-    "SaProt-650M-4bit-kiba": "#8172B3",
+    "SaProt-650M":            "#4C72B0",
+    "SaProt-35M":             "#DD8452",
+    "SaProt-650M-4bit":       "#55A868",
+    "SaProt-650M-8bit":       "#C44E52",
+    "SaProt-650M-4bit-kiba":  "#8172B3",
+    "SaProt-35M-kiba":        "#C4A35A",
+    "SaProt-650M-8bit-kiba":  "#E377C2",
 }
 
 def concordance_index(y_true, y_pred, sample=3000, seed=42):
@@ -157,38 +159,38 @@ plt.close()
 print(f"Saved: {OUT_DIR}/04_metrics_comparison.png")
 
 # ══════════════════════════════════════════════════════════════
-# Figure 6 — DAVIS vs KIBA metrics comparison (4-bit model)
+# Figure 7 — KIBA multi-model full metrics comparison (2x2)
 # ══════════════════════════════════════════════════════════════
 if not kiba_df.empty:
-    davis_row = davis_df[davis_df["Model"] == "SaProt-650M-4bit"]
-    kiba_row  = kiba_df[kiba_df["Model"]  == "SaProt-650M-4bit-kiba"]
+    kiba_names  = kiba_df["Model"].tolist()
+    kiba_colors = [COLORS.get(n, "#888888") for n in kiba_names]
+    x_kiba      = np.arange(len(kiba_names))
 
-    if not davis_row.empty and not kiba_row.empty:
-        ds_labels = ["DAVIS", "KIBA"]
-        ds_colors = ["#55A868", "#8172B3"]
-        x = np.arange(2)
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+    axes = axes.flatten()
 
-        fig, axes = plt.subplots(1, 4, figsize=(14, 5))
-        for ax, metric, direction in zip(axes, metrics, better):
-            vals = [float(davis_row[metric].iloc[0]),
-                    float(kiba_row[metric].iloc[0])]
-            bars = ax.bar(x, vals, color=ds_colors, alpha=0.85, edgecolor="white")
-            ymin = min(vals) * 0.97
-            ymax = max(vals) * 1.05
-            ax.set_ylim(ymin, ymax)
-            ax.set_xticks(x)
-            ax.set_xticklabels(ds_labels, fontsize=11)
-            ax.set_title(f"{metric}\n({direction} is better)", fontsize=11, fontweight="bold")
-            ax.grid(True, axis="y", alpha=0.3)
-            for bar, val in zip(bars, vals):
-                ax.text(bar.get_x() + bar.get_width()/2,
-                        bar.get_height() + (ymax - ymin) * 0.01,
-                        f"{val:.4f}", ha="center", va="bottom",
-                        fontsize=10, fontweight="bold")
+    for ax, metric, direction in zip(axes, metrics, better):
+        values = kiba_df[metric].values
+        bars   = ax.bar(x_kiba, values, color=kiba_colors, alpha=0.85, edgecolor="white")
+        if metric in ref_lines:
+            yval, label = ref_lines[metric]
+            ax.axhline(yval, color="red", linestyle="--", linewidth=1.2,
+                       alpha=0.7, label=label)
+            ax.legend(fontsize=9)
+        ymin = min(values) * 0.97
+        ymax = max(values) * 1.05
+        ax.set_ylim(ymin, ymax)
+        ax.set_xticks(x_kiba)
+        ax.set_xticklabels(kiba_names, fontsize=9, rotation=15, ha="right")
+        ax.set_title(f"{metric}  ({direction} is better)", fontsize=11, fontweight="bold")
+        ax.grid(True, axis="y", alpha=0.3)
+        for bar, val in zip(bars, values):
+            ax.text(bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + (ymax - ymin) * 0.01,
+                    f"{val:.4f}", ha="center", va="bottom", fontsize=8)
 
-        fig.suptitle("Cross-Dataset Generalization: DAVIS vs KIBA (SaProt-650M-4bit)",
-                     fontsize=13, fontweight="bold")
-        plt.tight_layout()
-        plt.savefig(OUT_DIR / "06_kiba_metrics.png", dpi=150)
-        plt.close()
-        print(f"Saved: {OUT_DIR}/06_kiba_metrics.png")
+    fig.suptitle("SaProt DTI — Full Metrics Comparison (KIBA)", fontsize=14, fontweight="bold")
+    plt.tight_layout()
+    plt.savefig(OUT_DIR / "07_kiba_metrics.png", dpi=150)
+    plt.close()
+    print(f"Saved: {OUT_DIR}/07_kiba_metrics.png")

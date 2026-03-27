@@ -4,10 +4,11 @@ visualize_results.py
 Visualize SaProt DTI experiment results.
 
 Figures saved to outputs/figures/:
-  01_training_curves.png     - Val Pearson r per epoch (DAVIS models)
-  02_scatter_plots.png       - Predicted vs True pKd scatter (DAVIS models)
-  03_model_comparison.png    - Test/Val Pearson r bar chart (DAVIS models)
-  05_davis_vs_kiba.png       - DAVIS vs KIBA cross-dataset comparison
+  01_training_curves.png        - Val Pearson r per epoch (DAVIS models)
+  02_scatter_plots.png          - Predicted vs True pKd scatter (DAVIS models)
+  03_model_comparison.png       - Test/Val Pearson r bar chart (DAVIS models)
+  05_kiba_model_comparison.png  - KIBA multi-model comparison (35M / 8bit / 4bit)
+  06_cross_dataset.png          - DAVIS vs KIBA for all matched models
 
 Usage:
   python experiments/visualize_results.py
@@ -26,11 +27,13 @@ OUT_DIR     = Path(__file__).parent.parent / "outputs" / "figures"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 COLORS = {
-    "SaProt-650M":           "#4C72B0",
-    "SaProt-35M":            "#DD8452",
-    "SaProt-650M-4bit":      "#55A868",
-    "SaProt-650M-8bit":      "#C44E52",
-    "SaProt-650M-4bit-kiba": "#8172B3",
+    "SaProt-650M":            "#4C72B0",
+    "SaProt-35M":             "#DD8452",
+    "SaProt-650M-4bit":       "#55A868",
+    "SaProt-650M-8bit":       "#C44E52",
+    "SaProt-650M-4bit-kiba":  "#8172B3",
+    "SaProt-35M-kiba":        "#C4A35A",
+    "SaProt-650M-8bit-kiba":  "#E377C2",
 }
 
 # ── Load all results ───────────────────────────────────────────
@@ -132,59 +135,72 @@ plt.close()
 print("Saved: 03_model_comparison.png")
 
 # ══════════════════════════════════════════════════════════════
-# Figure 5 — DAVIS vs KIBA cross-dataset comparison
+# Figure 5 — KIBA multi-model comparison (35M / 8bit / 4bit)
 # ══════════════════════════════════════════════════════════════
 if kiba_runs:
-    # Collect metrics for cross-dataset comparison (4-bit model only)
-    davis_4bit = all_runs.get("SaProt-650M-4bit")
-    kiba_4bit  = all_runs.get("SaProt-650M-4bit-kiba")
+    kiba_names  = list(kiba_runs.keys())
+    kiba_test_r = [kiba_runs[n]["result"]["test_pearson_r"] for n in kiba_names]
+    kiba_val_r  = [kiba_runs[n]["result"]["best_val_r"]     for n in kiba_names]
+    kiba_colors = [COLORS.get(n, "#888888") for n in kiba_names]
 
-    if davis_4bit and kiba_4bit:
-        datasets = ["DAVIS", "KIBA"]
-        test_rs  = [davis_4bit["result"]["test_pearson_r"],
-                    kiba_4bit["result"]["test_pearson_r"]]
-        val_rs   = [davis_4bit["result"]["best_val_r"],
-                    kiba_4bit["result"]["best_val_r"]]
-        ds_colors = ["#55A868", "#8172B3"]
+    x = np.arange(len(kiba_names))
+    w = 0.35
+    fig, ax = plt.subplots(figsize=(8, 5))
+    bars1 = ax.bar(x - w/2, kiba_val_r,  w, label="Val Pearson r",  color=kiba_colors, alpha=0.6)
+    bars2 = ax.bar(x + w/2, kiba_test_r, w, label="Test Pearson r", color=kiba_colors, alpha=1.0)
+    ax.axhline(0.8, color="red", linestyle="--", linewidth=1.2, alpha=0.7, label="Target (r=0.8)")
+    ax.set_xticks(x)
+    ax.set_xticklabels(kiba_names, fontsize=10, rotation=15, ha="right")
+    ax.set_ylabel("Pearson r", fontsize=12)
+    ax.set_title("SaProt DTI — Model Comparison (KIBA)", fontsize=14, fontweight="bold")
+    ax.set_ylim(0.75, 0.84)
+    ax.legend(fontsize=10)
+    for bar in list(bars1) + list(bars2):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.001,
+                f"{bar.get_height():.4f}", ha="center", va="bottom", fontsize=8)
+    ax.grid(True, axis="y", alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(OUT_DIR / "05_kiba_model_comparison.png", dpi=150)
+    plt.close()
+    print("Saved: 05_kiba_model_comparison.png")
 
-        x = np.arange(2)
+# ══════════════════════════════════════════════════════════════
+# Figure 6 — Cross-dataset generalization: DAVIS vs KIBA
+#             (all matched models: 35M, 8bit, 4bit)
+# ══════════════════════════════════════════════════════════════
+if kiba_runs:
+    pairs = [
+        ("SaProt-35M",        "SaProt-35M-kiba"),
+        ("SaProt-650M-8bit",  "SaProt-650M-8bit-kiba"),
+        ("SaProt-650M-4bit",  "SaProt-650M-4bit-kiba"),
+    ]
+    valid_pairs = [(d, k) for d, k in pairs if d in all_runs and k in all_runs]
+
+    if valid_pairs:
+        labels     = [d.replace("SaProt-", "") for d, _ in valid_pairs]
+        davis_test = [all_runs[d]["result"]["test_pearson_r"] for d, _ in valid_pairs]
+        kiba_test  = [all_runs[k]["result"]["test_pearson_r"] for _, k in valid_pairs]
+
+        x = np.arange(len(labels))
         w = 0.35
-        fig, axes = plt.subplots(1, 2, figsize=(10, 5))
-
-        # Left: Val r comparison
-        ax = axes[0]
-        bars = ax.bar(x, val_rs, color=ds_colors, alpha=0.85, edgecolor="white")
+        fig, ax = plt.subplots(figsize=(9, 5))
+        bars1 = ax.bar(x - w/2, davis_test, w, label="DAVIS", color="#4878D0", alpha=0.9)
+        bars2 = ax.bar(x + w/2, kiba_test,  w, label="KIBA",  color="#EE854A", alpha=0.9)
         ax.axhline(0.8, color="red", linestyle="--", linewidth=1.2, alpha=0.7, label="Target (r=0.8)")
-        ax.set_xticks(x); ax.set_xticklabels(datasets, fontsize=12)
-        ax.set_ylabel("Val Pearson r", fontsize=12)
-        ax.set_title("Validation Pearson r\n(SaProt-650M-4bit)", fontsize=12, fontweight="bold")
-        ax.set_ylim(0.75, 0.85)
-        ax.legend(fontsize=10)
-        ax.grid(True, axis="y", alpha=0.3)
-        for bar, val in zip(bars, val_rs):
-            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.001,
-                    f"{val:.4f}", ha="center", va="bottom", fontsize=11, fontweight="bold")
-
-        # Right: Test r comparison
-        ax = axes[1]
-        bars = ax.bar(x, test_rs, color=ds_colors, alpha=0.85, edgecolor="white")
-        ax.axhline(0.8, color="red", linestyle="--", linewidth=1.2, alpha=0.7, label="Target (r=0.8)")
-        ax.set_xticks(x); ax.set_xticklabels(datasets, fontsize=12)
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, fontsize=11)
         ax.set_ylabel("Test Pearson r", fontsize=12)
-        ax.set_title("Test Pearson r\n(SaProt-650M-4bit)", fontsize=12, fontweight="bold")
-        ax.set_ylim(0.75, 0.85)
-        ax.legend(fontsize=10)
+        ax.set_title("Cross-Dataset Generalization: DAVIS vs KIBA", fontsize=14, fontweight="bold")
+        ax.set_ylim(0.75, 0.84)
+        ax.legend(fontsize=11)
+        for bar in list(bars1) + list(bars2):
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.001,
+                    f"{bar.get_height():.4f}", ha="center", va="bottom", fontsize=9, fontweight="bold")
         ax.grid(True, axis="y", alpha=0.3)
-        for bar, val in zip(bars, test_rs):
-            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.001,
-                    f"{val:.4f}", ha="center", va="bottom", fontsize=11, fontweight="bold")
-
-        fig.suptitle("Cross-Dataset Generalization: DAVIS vs KIBA",
-                     fontsize=14, fontweight="bold")
         plt.tight_layout()
-        plt.savefig(OUT_DIR / "05_davis_vs_kiba.png", dpi=150)
+        plt.savefig(OUT_DIR / "06_cross_dataset.png", dpi=150)
         plt.close()
-        print("Saved: 05_davis_vs_kiba.png")
+        print("Saved: 06_cross_dataset.png")
 
 # ══════════════════════════════════════════════════════════════
 # Summary
