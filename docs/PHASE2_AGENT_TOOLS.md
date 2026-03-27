@@ -116,37 +116,58 @@ Status  : optimized
 ```
 Cache hit/miss 모두 확인 ✅
 
-### Tool 4: Drug Name Resolver (예정)
+### Tool 4: Drug Name Resolver ✅ 완료
 
-> **파일:** `tools/pubchem_tool.py`
+> **파일:** `tools/pubchem_tool.py` | **완료일:** 2026-03-27
 
 | 항목 | 내용 |
 |------|------|
-| **입력** | 약물 이름 (예: `"Imatinib"`, `"아스피린"`) |
-| **출력** | SMILES, CID, 분자식, MW |
-| **API** | `pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{name}/...` |
+| **입력** | 약물 이름 (예: `"Imatinib"`, `"Aspirin"`, `"Gleevec"`) |
+| **출력** | SMILES, CID, 분자식, MW, IUPAC 이름 |
+| **캐시** | `cache/pubchem/{name}.json` |
+| **API** | `pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{name}/property/.../JSON` |
 
 일반 사용자가 SMILES를 모르더라도 약물 이름으로 검색 가능하게 함.
 
-### Tool 5: Protein Name Resolver (예정)
+**테스트 결과:**
+```
+Imatinib  → CID 5291   | C29H31N7O | SMILES: CC1=C(C=C... ✅
+Aspirin   → CID 2244   | C9H8O4    | SMILES: CC(=O)OC1=CC=CC=C1C(=O)O ✅
+Sildenafil→ CID 135398744 | C22H30N6O4S ✅
+Gleevec   → CID 123596  (브랜드명도 인식) ✅
+Cache hit/miss 모두 확인 ✅
+```
 
-> **파일:** `tools/uniprot_tool.py`
+### Tool 5: Protein Name Resolver ✅ 완료
+
+> **파일:** `tools/uniprot_tool.py` | **완료일:** 2026-03-27
 
 | 항목 | 내용 |
 |------|------|
-| **입력** | 유전자명 또는 단백질명 (예: `"EGFR"`, `"BCR-ABL"`, `"COX-2"`) |
-| **출력** | UniProt ID, AA sequence, organism |
-| **API** | `rest.uniprot.org/uniprotkb/search?query=gene:{name}&organism_id=9606` |
+| **입력** | 유전자명 또는 단백질명 (예: `"EGFR"`, `"ABL1"`, `"HMGCR"`) |
+| **출력** | UniProt ID, gene, protein name, organism, seq_length, AA sequence |
+| **캐시** | `cache/uniprot/{name}_{organism_id}.json` |
+| **API** | `rest.uniprot.org/uniprotkb/search` (Swiss-Prot 우선, TrEMBL fallback) |
 
 전문가가 아니어도 단백질 이름으로 AlphaFold + DTI Tool 실행 가능하게 함.
 
-**Tool 4+5 추가 시 가능해지는 쿼리 예시:**
+**테스트 결과:**
+```
+EGFR  → P00533 [Swiss-Prot] | Homo sapiens | 1210 aa ✅
+ABL1  → P00519 [Swiss-Prot] | Homo sapiens | 1130 aa ✅
+HMGCR → P04035 [Swiss-Prot] | Homo sapiens | 888 aa  ✅ (Lipitor 타겟)
+PTGS1 → P23219 [Swiss-Prot] | Homo sapiens | 599 aa  ✅ (COX-1)
+Cache hit/miss 모두 확인 ✅
+```
+
+**Tool 4+5 추가로 가능해진 쿼리:**
 
 | 쿼리 | Tool 4+5 없이 | Tool 4+5 있으면 |
 |------|-------------|----------------|
-| "이마티닙이 BCR-ABL에 결합하나요?" | ❌ | ✅ |
-| "아스피린과 COX-2 결합력은?" | ❌ | ✅ |
+| "이마티닙이 BCR-ABL에 결합하나요?" | ❌ | ✅ (LLM이 ABL1→ABL1 gene 변환) |
+| "아스피린과 COX-1 결합력은?" | ❌ | ✅ |
 | "게피티닙이 EGFR을 억제할 수 있나요?" | ❌ | ✅ |
+| "리피토가 HMGCR에 결합해?" | ❌ | ✅ |
 
 ### Agent 오케스트레이션 (예정)
 - Framework: smolagents

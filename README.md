@@ -107,6 +107,37 @@ python experiments/visualize_results.py
 
 ---
 
+## Scope & Limitations
+
+This system is optimized for **known drugs interacting with human protein targets**.
+
+| Scope | Coverage |
+|-------|----------|
+| Drug input | Common name, generic name, some brand names (via PubChem) |
+| Protein input | Human gene/protein names (via UniProt, organism: Homo sapiens) |
+| Protein families | Human kinases — DAVIS (442 kinases) + KIBA (229 kinases) |
+| Affinity metric | pKd / KIBA score (continuous regression) |
+
+**Current limitations:**
+
+- **Viral / bacterial targets** — Training data (DAVIS, KIBA) covers human kinases only. Queries like "Remdesivir vs. SARS-CoV-2 RdRp" are out-of-distribution and unreliable.
+- **Non-kinase human proteins** — GPCR, protease, nuclear receptor families are underrepresented in DAVIS/KIBA. Predictions may be less accurate.
+- **Korean / non-English drug names** — The LLM orchestrator must translate to an English generic name before calling Tool 4 (e.g., "비아그라" → "Sildenafil").
+- **Vague target descriptions** — Inputs like "콜레스테롤 합성 효소" require the LLM to map to a gene name (HMGCR) before Tool 5 can resolve it.
+
+---
+
+## Future Work
+
+| Direction | Description | Impact |
+|-----------|-------------|--------|
+| **BindingDB expansion** | Add ~2.3M drug-target pairs covering viral, bacterial, and non-kinase targets | Resolves viral target limitation |
+| **FoldSeek 3Di tokens** | Replace `#` placeholders with real structural tokens from AlphaFold + FoldSeek | Potential DTI accuracy improvement |
+| **smolagents orchestration** | End-to-end natural language query → multi-tool pipeline | Core Agent demo |
+| **Docker deployment** | Containerize full stack for reproducible demo | Portability |
+
+---
+
 ## Documentation
 
 | Document | Contents |
