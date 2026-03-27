@@ -14,9 +14,11 @@ User Query (자연어)
 Agent AI (smolagents + LLM)
       ↓
 ┌─────────────────────────────────┐
-│ Tool 1: DTI Prediction    ✅    │ ← SaProt-650M-4bit + MLP (DAVIS/KIBA 학습 완료)
-│ Tool 2: Protein Structure ✅    │ ← AlphaFold DB API (Phase 2-b 완료)
-│ Tool 3: Ligand Structure  🔄    │ ← RDKit 3D conformer (다음 단계)
+│ Tool 4: Drug Name Resolver  🔄  │ ← 약물 이름 → SMILES (PubChem API)
+│ Tool 5: Protein Resolver    🔄  │ ← 단백질명 → UniProt ID + 서열 (UniProt API)
+│ Tool 1: DTI Prediction      ✅  │ ← SaProt-650M-4bit + MLP (DAVIS/KIBA 학습 완료)
+│ Tool 2: Protein Structure   ✅  │ ← AlphaFold DB API
+│ Tool 3: Ligand Structure    ✅  │ ← RDKit 3D conformer
 └─────────────────────────────────┘
       ↓
 Final Response (pKd + 구조 정보)
@@ -114,6 +116,38 @@ Status  : optimized
 ```
 Cache hit/miss 모두 확인 ✅
 
+### Tool 4: Drug Name Resolver (예정)
+
+> **파일:** `tools/pubchem_tool.py`
+
+| 항목 | 내용 |
+|------|------|
+| **입력** | 약물 이름 (예: `"Imatinib"`, `"아스피린"`) |
+| **출력** | SMILES, CID, 분자식, MW |
+| **API** | `pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{name}/...` |
+
+일반 사용자가 SMILES를 모르더라도 약물 이름으로 검색 가능하게 함.
+
+### Tool 5: Protein Name Resolver (예정)
+
+> **파일:** `tools/uniprot_tool.py`
+
+| 항목 | 내용 |
+|------|------|
+| **입력** | 유전자명 또는 단백질명 (예: `"EGFR"`, `"BCR-ABL"`, `"COX-2"`) |
+| **출력** | UniProt ID, AA sequence, organism |
+| **API** | `rest.uniprot.org/uniprotkb/search?query=gene:{name}&organism_id=9606` |
+
+전문가가 아니어도 단백질 이름으로 AlphaFold + DTI Tool 실행 가능하게 함.
+
+**Tool 4+5 추가 시 가능해지는 쿼리 예시:**
+
+| 쿼리 | Tool 4+5 없이 | Tool 4+5 있으면 |
+|------|-------------|----------------|
+| "이마티닙이 BCR-ABL에 결합하나요?" | ❌ | ✅ |
+| "아스피린과 COX-2 결합력은?" | ❌ | ✅ |
+| "게피티닙이 EGFR을 억제할 수 있나요?" | ❌ | ✅ |
+
 ### Agent 오케스트레이션 (예정)
 - Framework: smolagents
 - LLM: 미정 (로컬 경량 모델 또는 API)
@@ -127,6 +161,8 @@ Cache hit/miss 모두 확인 ✅
 tools/
 ├── alphafold_tool.py   ✅  Tool 2: AlphaFold DB API
 ├── rdkit_tool.py       ✅  Tool 3: RDKit 3D Ligand
+├── pubchem_tool.py     🔄  Tool 4: Drug Name Resolver (예정)
+├── uniprot_tool.py     🔄  Tool 5: Protein Name Resolver (예정)
 └── dti_tool.py         🔄  Tool 1: DTI 추론 래핑 (예정)
 
 cache/
