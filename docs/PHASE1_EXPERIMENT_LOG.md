@@ -1,8 +1,8 @@
-# Phase 1 실험 일지 — Reference Score 생성
+# Phase 1 실험 일지 — DTI 파이프라인 구축 과정
 
-> **작성일시:** 2026년 3월 25일 (수) KST
-> **목표:** SaProt-650M 기반 DAVIS DTI Reference Score 산출 (Pearson r ≥ 0.8)
-> **현재 상태:** 🔄 진행 중 — V3 완료 (r = 0.7855), 목표까지 0.015 차이
+> **작성일시:** 2026년 3월 25일 (초안) / 2026년 3월 30일 (최종 업데이트)
+> **목표:** SaProt-650M 기반 DAVIS DTI 파이프라인 구축
+> **최종 상태:** ✅ 완료 — Phase 3까지 종료, 최종 r=0.8082 (SaProt-650M FP16 + 3Di)
 
 ---
 
@@ -32,173 +32,123 @@
 | 모델 | `westlake-repl/SaProt_650M_AF2` |
 | 모델 클래스 | `AutoModelForSequenceClassification(num_labels=1)` |
 | 약물 입력 | `tokenizer(protein, SMILES)` — 시퀀스 쌍 직접 입력 |
-| 데이터 | davis_test.csv (panspecies-dti, 이진 레이블) |
 
 ### 결과
 
 | 지표 | 값 |
 |------|-----|
 | **Pearson R** | **0.030** |
-| 처리 샘플 | 6,011개 |
 
 ### 실패 원인
 
 1. **잘못된 모델 클래스:** 랜덤 초기화된 분류 헤드 추가 → 완전한 노이즈 출력
 2. **잘못된 입력 포맷:** SMILES를 단백질 토크나이저에 입력 → 어휘 미인식
-3. **DTI 파인튜닝 없음:** SaProt은 Masked LM 사전학습 모델, 결합 친화도 예측 불가
+3. **DTI 학습 없음:** SaProt은 Masked LM 사전학습 모델, pKd 예측 불가
 
 ---
 
 ## 실험 V2 — SPRINT 아키텍처 + panspecies-dti 가중치
 
 **일시:** 2026년 3월 25일 20:04 ~ 21:09 KST
-**소요 시간:** 1시간 5분 44초 (GPU)
 
 ### 아키텍처
 
 ```
-단백질: SA 시퀀스 → SaProt-650M (frozen) → 4-head MultiHeadAttentionPool
-        → Sequential(LN+LeakyReLU+Linear×3) → [1024] → L2 normalize
-
-약물:   SMILES → RDKit Morgan FP (2048-bit)
-        → Linear(2048→1260)+BN+LeakyReLU × 3 → Linear(1024) → L2 normalize
-
-융합:   cosine similarity (dot product)
+단백질: SA 시퀀스 → SaProt-650M (frozen) → MultiHeadAttentionPool → [1024] → L2 normalize
+약물:   SMILES → Morgan FP (2048-bit) → Linear × 3 → [1024] → L2 normalize
+융합:   cosine similarity
 ```
-
-### 가중치
-
-| 항목 | 값 |
-|------|-----|
-| 출처 | panspecies-dti (SPRINT) |
-| 학습 데이터 | MERGED (BIOSNAP + BindingDB + Human) |
-| 학습 태스크 | 이진 분류 (CE loss) |
 
 ### 결과
 
 | 지표 | 값 |
 |------|-----|
 | **Pearson R** | **+0.1412** |
-| p-value | 3.73e-28 |
-| 처리 샘플 | 6,011개 |
 
 ### 실패 원인
 
 1. **OOD 가중치:** SPRINT은 MERGED 데이터로 학습, DAVIS는 포함 안 됨
 2. **태스크 불일치:** 이진 분류 모델 → 연속 pKd 회귀에 부적합
-3. **평가 데이터 문제:** panspecies-dti DAVIS는 이진 레이블(0/1), 연속 pKd가 아님
 
 ---
 
 ## 실험 V3 — SaProt + DTI MLP 헤드 (DAVIS 직접 학습)
 
-**일시:** 2026년 3월 25일 21:55 ~ 22:19 KST
+**일시:** 2026년 3월 25일 21:55 ~
 
 ### 방법론 전환 배경
 
 V2 실패 분석 결과, 핵심 문제는 **"DTI 태스크용으로 DAVIS에서 직접 학습된 가중치가 없다"**는 것.
 
-해결책: SaProt을 frozen 인코더로 사용하고, 소형 MLP 헤드만 DAVIS 연속 pKd 데이터로 학습.
+해결책: SaProt을 frozen 인코더로 사용하고, **소형 MLP 헤드만 DAVIS 연속 pKd 데이터로 학습**.
 
-- **데이터:** DeepPurpose DAVIS (연속 pKd, 30,056 쌍, `binary=False, convert_to_log=True`)
+- **데이터:** DeepPurpose DAVIS (연속 pKd, 30,056 쌍)
 - **분할:** Train 70% / Val 10% / Test 20% (seed=42)
 
-### 아키텍처
+### 파이프라인
 
 ```
-단백질: AA 시퀀스 → SA 포맷("P#F#...") → SaProt (frozen)
-        → mean pool → [prot_dim]  ← pre-computed cache
-
-약물:   SMILES → Morgan FP (radius=2, nBits=2048) → [2048]
-
-DTI 헤드 (훈련 대상):
-  prot_enc: Linear(prot_dim→512) + LayerNorm + GELU + Linear(512→256) + GELU
-  drug_enc: Linear(2048→512) + BatchNorm + GELU + Linear(512→256) + GELU
-  regressor: Linear(512→256) + GELU + Dropout(0.1) + Linear(256→64) + GELU + Linear(64→1)
-
-Loss: HuberLoss(delta=1.0)  |  Optimizer: Adam(lr=1e-3)  |  Scheduler: CosineAnnealingLR
+SMILES  → Morgan FP (radius=2, nBits=2048)              ─┐
+                                                          ├→ DTI MLP 헤드 → pKd
+AA서열  → SA 토큰("M#E#T#...") → SaProt (frozen) → mean pool ─┘
 ```
 
-### 실험 V3-A: SaProt-650M
-
-**시작:** 2026-03-25 21:55 | **완료:** 22:16
+### V3-A: SaProt-650M FP16
 
 | 항목 | 값 |
 |------|-----|
-| 인코더 | SaProt-650M-AF2 (1,280-dim, 652M params, frozen) |
 | 단백질 임베딩 계산 | 379개 unique proteins, ~20분 (GPU) |
-| 학습 시간 | **58.7초** (DTI 헤드만) |
-| Epochs | 50 (Early stopping 미작동) |
+| 학습 시간 | **58.7초** (MLP 헤드만) |
 | **Test Pearson r** | **0.7855** |
 | Val Best r | 0.7990 |
-| p-value | 0.0 (매우 유의) |
-| Test 샘플 수 | 6,012개 |
 
-### 실험 V3-B: SaProt-35M
-
-**시작:** 2026-03-25 22:16 | **완료:** 22:18
+### V3-B: SaProt-35M FP16
 
 | 항목 | 값 |
 |------|-----|
-| 인코더 | SaProt-35M-AF2 (480-dim, 327M params, frozen) |
 | 학습 시간 | **54.8초** |
-| Epochs | 50 |
 | **Test Pearson r** | **0.7832** |
-| Val Best r | 0.7872 |
-| p-value | 0.0 |
 
-### 실험 V3-C: SaProt-650M 4-bit
+**핵심 발견:** 35M이 650M 대비 파라미터 19배 적지만 성능 차이 **0.0023**
 
-**시작:** 2026-03-25 22:18 | **완료:** 22:19 (즉시 실패)
+### V3-C/D: 양자화 실험
 
-**오류:** `AssertionError` — bitsandbytes가 EsmModel pooler 레이어를 양자화하면서 shape 불일치
-
-**해결책:** `EsmModel.from_pretrained(..., add_pooling_layer=False)` 추가 → 재실행 예정
-
----
-
-## V1 ~ V3 종합 비교
-
-| 버전 | 방법 | Pearson r | 비고 |
-|------|------|----------|------|
-| V1 | SaProt-650M (랜덤 헤드) | 0.030 | ❌ 입력 오류 + 랜덤 헤드 |
-| V2 | SPRINT + MERGED 가중치 | 0.141 | ❌ OOD + 태스크 불일치 |
-| **V3-650M** | **SaProt-650M + DTI 헤드** | **0.7855** | ✅ 목표 0.015 차이 |
-| **V3-35M** | **SaProt-35M + DTI 헤드** | **0.7832** | ✅ 650M 대비 -0.0023 |
-| V3-4bit | SaProt-650M 4-bit | — | ❌ 재실행 예정 |
-
-### 핵심 발견
-- **650M vs 35M 성능 차이: 0.0023** — 파라미터 약 18배 차이임에도 사실상 동일한 성능
-- Val에서는 650M이 0.799까지 도달 → 모델 개선 여지 있음
-- 목표(r ≥ 0.8)에 근접, 아직 Phase 1 미완료
+| 모델 | Test r | 비고 |
+|------|--------|------|
+| SaProt-650M-8bit | 0.7812 | INT8 소폭 하락 |
+| SaProt-650M-4bit | **0.7914** | NF4 오히려 향상 |
 
 ---
 
-## 다음 단계
+## LoRA 파인튜닝 시도 및 포기
 
-1. **V3-C 4bit 재실행** — `add_pooling_layer=False` 패치 후 실행
-2. **r ≥ 0.8 달성 시도** — 하이퍼파라미터 튜닝 또는 사전학습 활용
-3. **Phase 2 전환** — Reference Score 확보 후 경량화 트레이드오프 분석 시작
+| 항목 | 내용 |
+|------|------|
+| 시도 이유 | SOTA 대비 성능 갭(r=0.79 vs 0.89) 줄이기 위해 |
+| 문제 | GTX 1650 SUPER는 Tensor Core 없음 → epoch당 ~2.5시간 |
+| 결론 | 50 epoch × 2.5h = 5일 이상 → 프로젝트 기간 내 불가 |
+
+**방향 전환:** "모델 파인튜닝으로 SOTA 달성" → "frozen 인코더 기반 Agent 시스템 구축"
+
+이 전환은 연구 목적을 재정의한다:
+> SaProt의 DTI 예측 능력 자체를 극대화하는 것이 아니라,
+> **SaProt의 3Di 구조 토큰이 DTI 예측에 기여하는지 검증하고, 이를 Agent Tool로 활용**하는 것.
 
 ---
 
-## 파일 목록
+## Phase 3 — FoldSeek 3Di 통합
 
+3Di 토큰 적용 후 전 모델에서 성능 향상 확인.
+FP16이 3Di 구조 신호를 가장 잘 활용함.
+
+**최종 결과 (DAVIS):**
 ```
-Capstone_Design/
-├── train_dti_saprot.py          # V3 메인 학습 스크립트
-├── run_all_experiments.sh       # 3개 모델 자동 실행
-├── experiments/
-│   ├── run_reference.py         # V2 SPRINT 파이프라인
-│   └── run_baseline_deeppurpose.py
-├── results/
-│   ├── SaProt-650M/             # V3-A 결과 (r=0.7855)
-│   └── SaProt-35M/              # V3-B 결과 (r=0.7832)
-├── outputs/
-│   └── reference_scores_osj.csv # V2 예측값
-├── data/
-│   └── davis_test.csv
-└── cache/
-    ├── prot_embs_650M_none.pt   # 379개 단백질 임베딩 캐시
-    └── prot_embs_35M_none.pt
+650M FP16 + 3Di:  r = 0.8082  (+0.0227 vs placeholder)
+35M FP16  + 3Di:  r = 0.7996  (+0.0165)
+650M-8bit + 3Di:  r = 0.8027  (+0.0215)
+650M-4bit + 3Di:  r = 0.7977  (+0.0063)
 ```
+
+**최종 모델 확정: SaProt-650M FP16 + 3Di**
+
+자세한 내용: [Phase 1 Training Report](PHASE1_TRAINING_EXPERIMENTS.md)

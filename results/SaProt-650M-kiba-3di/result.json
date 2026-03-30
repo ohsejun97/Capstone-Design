@@ -1,0 +1,18 @@
+{
+  "run_name": "SaProt-650M-kiba-3di",
+  "dataset": "kiba",
+  "encoder": "650M",
+  "quant": "none",
+  "lora": false,
+  "use_3di": true,
+  "lora_r": null,
+  "prot_dim": 1280,
+  "timestamp": "2026-03-30T03:55:03.960374",
+  "test_pearson_r": 0.8031967282295227,
+  "test_p_value": 0.0,
+  "best_val_r": 0.8133947253227234,
+  "epochs_trained": 50,
+  "train_time_sec": 200.2,
+  "n_test": 23652,
+  "n_train": 82777
+}

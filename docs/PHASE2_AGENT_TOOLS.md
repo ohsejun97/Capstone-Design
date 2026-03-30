@@ -1,8 +1,8 @@
 # Phase 2 — Agent Tools 개발 일지
 
-> **작성일시:** 2026년 3월 27일 KST
-> **목표:** DTI 예측 Agent의 3개 Tool 구현 및 smolagents 오케스트레이션
-> **현재 상태:** 🔄 진행 중 — Tool 1 (AlphaFold DB) 완료
+> **작성일시:** 2026년 3월 27일 KST (최종 업데이트: 2026-03-30)
+> **목표:** DTI 예측 Agent의 5개 Tool 구현 및 smolagents 오케스트레이션
+> **현재 상태:** ✅ Tool 1~5 구현 완료, Phase 4 (Agent 오케스트레이션) 진행 예정
 
 ---
 
@@ -82,16 +82,26 @@ EGFR(P00533) global pLDDT = 75.94 → Confident 수준
 
 ---
 
-## Tool 1: DTI Prediction (Phase 1 완료)
+## Tool 1: DTI Prediction (Phase 3 완료, 최종 모델 확정)
 
-> **파일:** `train_dti_saprot.py` (학습), `tools/dti_tool.py` (예정 — 추론 전용 래핑)
+> **파일:** `train_dti_saprot.py` (학습), `tools/dti_tool.py` (추론 전용 래핑)
 
-Phase 1에서 학습/검증 완료. Agent Tool로 사용하기 위한 추론 전용 래핑은
-Tool 3 완료 후 Agent 오케스트레이션 단계에서 진행 예정.
+Phase 3까지 완료. FoldSeek 3Di 구조 토큰 적용 후 최종 모델 확정.
 
-| 모델 | DAVIS r | KIBA r |
-|------|--------|--------|
-| SaProt-650M-4bit | 0.7914 | 0.7994 |
+**최종 채택 모델: SaProt-650M FP16 + 3Di**
+
+| 모델 | DAVIS r | KIBA r | 비고 |
+|------|--------|--------|------|
+| SaProt-650M FP16 + 3Di | **0.8082** | **0.8032** | ✅ 최종 채택 |
+| SaProt-35M FP16 + 3Di | 0.7996 | 0.8035 | 대안 (속도 우선 시) |
+| SaProt-650M-8bit + 3Di | 0.8027 | 0.7997 | |
+| SaProt-650M-4bit + 3Di | 0.7977 | 0.7935 | 3Di와 4bit 부적합 |
+
+**설계 요약:**
+- SaProt은 **frozen** 단백질 인코더 (가중치 업데이트 없음)
+- Morgan FP는 고정 약물 인코더 (학습 없음)
+- **MLP 헤드만 DAVIS/KIBA pKd 데이터로 학습** (~3분)
+- 3Di 토큰: AlphaFold DB → FoldSeek → per-residue 구조 토큰 → SaProt 입력
 
 ---
 
@@ -169,10 +179,11 @@ Cache hit/miss 모두 확인 ✅
 | "게피티닙이 EGFR을 억제할 수 있나요?" | ❌ | ✅ |
 | "리피토가 HMGCR에 결합해?" | ❌ | ✅ |
 
-### Agent 오케스트레이션 (예정)
-- Framework: smolagents
+### Agent 오케스트레이션 (Phase 4 — 다음 단계)
+- Framework: smolagents (Hugging Face)
 - LLM: 미정 (로컬 경량 모델 또는 API)
-- Tool 등록 → 자연어 쿼리 → Tool 선택 → 결과 종합
+- Tool 1~5 등록 → 자연어 쿼리 → Tool 선택 → 결과 종합
+- 목표: "Does Imatinib bind to ABL1?" 한 문장으로 pKd + 구조 정보 반환
 
 ---
 

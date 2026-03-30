@@ -1,0 +1,18 @@
+{
+  "run_name": "SaProt-650M-4bit-davis-3di",
+  "dataset": "davis",
+  "encoder": "650M",
+  "quant": "4bit",
+  "lora": false,
+  "use_3di": true,
+  "lora_r": null,
+  "prot_dim": 1280,
+  "timestamp": "2026-03-30T03:44:10.993437",
+  "test_pearson_r": 0.7976828217506409,
+  "test_p_value": 0.0,
+  "best_val_r": 0.8067506551742554,
+  "epochs_trained": 50,
+  "train_time_sec": 56.9,
+  "n_test": 6012,
+  "n_train": 21039
+}

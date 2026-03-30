@@ -1,6 +1,6 @@
 # Bio-AI Agent System for Drug–Target Interaction Analysis
 
-> Capstone Design Project — Bio-AI pipeline that answers natural language queries about drug-target interactions using quantized protein language models, structural databases, and LLM orchestration.
+> Capstone Design Project — Bio-AI pipeline that answers natural language queries about drug-target interactions using a frozen protein language model, structural databases, and LLM orchestration.
 
 ---
 
@@ -30,8 +30,8 @@ Instead of requiring expert knowledge (UniProt IDs, SMILES strings, database que
  ┌─────────┐  ┌──────────────┐  ┌────────────┐
  │ Ligand  │  │  DTI Tool    │  │  Protein   │
  │  Tool   │  │              │  │  Tool      │
- │ (RDKit) │  │ SaProt-4bit  │  │(AlphaFold) │
- │ 3D SDF  │  │  + MLP Head  │  │  3D PDB    │
+ │ (RDKit) │  │SaProt-650M   │  │(AlphaFold) │
+ │ 3D SDF  │  │+ 3Di + MLP   │  │  3D PDB    │
  └─────────┘  └──────┬───────┘  └────────────┘
                      │
                      ▼
@@ -48,14 +48,12 @@ Instead of requiring expert knowledge (UniProt IDs, SMILES strings, database que
 |-------|-------------|--------|
 | Phase 1 | DTI model benchmarking (DAVIS, 4 model variants) | ✅ Complete |
 | Phase 2a | Cross-dataset generalization validation (KIBA) | ✅ Complete |
-| Phase 2b | Protein Tool — AlphaFold DB API | ✅ Complete |
-| Phase 2b | Ligand Tool — RDKit 3D conformer | ✅ Complete |
-| Phase 2b | Drug Name Resolver — PubChem API | 🔄 In Progress |
-| Phase 2b | Protein Name Resolver — UniProt Search API | 🔄 In Progress |
-| Phase 3 | Agent orchestration — smolagents | ⏳ Planned |
-| Phase 4 | End-to-end demo | ⏳ Planned |
+| Phase 2b | Agent Tools 1–5 implementation | ✅ Complete |
+| Phase 3 | FoldSeek 3Di token integration + re-evaluation | ✅ Complete |
+| Phase 4 | Agent orchestration — smolagents | 🔄 Next |
+| Phase 5 | End-to-end demo | ⏳ Planned |
 
-**Best DTI model:** SaProt-650M-4bit — DAVIS r=0.7914, KIBA r=0.7994
+**Best DTI model:** SaProt-650M FP16 + 3Di — DAVIS r=0.8082, KIBA r=0.8032
 (see [Phase 1 Training Report](docs/PHASE1_TRAINING_EXPERIMENTS.md))
 
 ---
@@ -64,7 +62,7 @@ Instead of requiring expert knowledge (UniProt IDs, SMILES strings, database que
 
 | # | Tool | Input | Output | Implementation |
 |---|------|-------|--------|----------------|
-| 1 | DTI Prediction | SMILES + AA sequence | pKd (binding affinity) | SaProt-650M (NF4 4-bit) + MLP head |
+| 1 | DTI Prediction | SMILES + AA sequence | pKd (binding affinity) | SaProt-650M FP16 + 3Di tokens + MLP head |
 | 2 | Protein Structure | UniProt ID | 3D PDB + pLDDT | AlphaFold DB REST API |
 | 3 | Ligand Structure | SMILES | 3D SDF + properties | RDKit ETKDGv3 + MMFF94 |
 | 4 | Drug Name Resolver | Drug name (e.g. "Imatinib") | SMILES | PubChem REST API |
@@ -78,12 +76,15 @@ Instead of requiring expert knowledge (UniProt IDs, SMILES strings, database que
 # Setup
 conda activate bioinfo
 
-# Train DTI model
-python train_dti_saprot.py --dataset davis --encoder 650M --quant 4bit
+# Train DTI model (with 3Di structural tokens)
+python train_dti_saprot.py --dataset davis --encoder 650M --use_3di
 
 # Test individual tools
 python tools/alphafold_tool.py P00533                        # Protein structure (EGFR)
 python tools/rdkit_tool.py "CC(=O)Oc1ccccc1C(=O)O"         # Ligand 3D (Aspirin)
+
+# Build 3Di token cache (prerequisite for --use_3di)
+python scripts/build_3di_cache.py --dataset davis --resume
 
 # Evaluate all trained models
 python experiments/evaluate_results.py
@@ -92,18 +93,83 @@ python experiments/visualize_results.py
 
 ---
 
+## Architecture
+
+### Why frozen SaProt + MLP head?
+
+Full fine-tuning of SaProt-650M requires >4GB VRAM and was not feasible on the project hardware (GTX 1650 SUPER, 4GB). LoRA fine-tuning was attempted but abandoned due to training speed (~2.5h/epoch on a GPU without Tensor Cores).
+
+Instead, this project treats SaProt as a **fixed protein encoder** and trains only a small MLP head to predict binding affinity. This separates concerns clearly:
+
+```
+SMILES  → Morgan Fingerprint (2048-bit, RDKit, fixed)    ─┐
+                                                           ├→ MLP Head → pKd
+AA seq  → SA tokens → SaProt-650M (frozen, FP16)          ─┘
+               ↑
+  "MaEvKc..." (AA + FoldSeek 3Di structural tokens)
+```
+
+- **SaProt** encodes protein sequence + 3D structural context (3Di tokens from FoldSeek)
+- **Morgan FP** encodes drug chemical structure as a fixed bit vector
+- **MLP head** (2.4M params) learns the binding affinity relationship between the two
+- SaProt weights are never updated — only the MLP head is trained (~3 min on DAVIS)
+
+### SA Token Format
+
+SaProt's vocabulary includes both amino acid identity and FoldSeek 3Di structural tokens:
+
+```python
+# With AlphaFold + FoldSeek (current, Phase 3+)
+sa_seq = "".join(aa.upper() + di.lower() for aa, di in zip(aa_seq, foldseek_3di))
+# "MEVK" + "adcp" → "MaEdVcKp"
+
+# Without structure info (Phase 1/2 baseline)
+sa_seq = "".join(aa + "#" for aa in aa_seq)
+# "MEVK" → "M#E#V#K#"
+```
+
+---
+
 ## Tech Stack
 
 | Component | Stack |
 |-----------|-------|
-| Protein encoder | SaProt-650M AF2 (frozen, NF4 4-bit via bitsandbytes) |
+| Protein encoder | SaProt-650M AF2 (frozen, FP16) |
 | Drug encoding | RDKit Morgan Fingerprint (2048-bit, radius=2) |
-| DTI head | PyTorch MLP (~2.6M params), trained on DAVIS + KIBA |
+| DTI head | PyTorch MLP (~2.4M params), trained on DAVIS + KIBA |
+| Structural tokens | FoldSeek 3Di via AlphaFold DB PDB |
 | Agent framework | smolagents (Hugging Face) |
 | Protein structure | AlphaFold DB (EBI REST API) |
 | Ligand structure | RDKit ETKDGv3 + MMFF94 force field |
 | Name resolution | PubChem API + UniProt Search API |
 | Hardware | GTX 1650 SUPER (4GB VRAM), WSL2, Python 3.10 |
+
+---
+
+## Results Summary
+
+### Phase 3: Placeholder vs 3Di Structural Tokens
+
+```
+DAVIS
+  Model        Placeholder    3Di     Delta
+  650M          0.7855     0.8082  +0.0227
+  35M           0.7832     0.7996  +0.0165
+  650M-8bit     0.7812     0.8027  +0.0215
+  650M-4bit     0.7914     0.7977  +0.0063
+
+KIBA
+  Model        Placeholder    3Di     Delta
+  650M          N/A          0.8032
+  35M           0.7894     0.8035  +0.0141
+  650M-8bit     0.7916     0.7997  +0.0081
+  650M-4bit     0.7994     0.7935  -0.0059
+```
+
+**Key findings:**
+- 3Di structural tokens improve performance across almost all models/datasets
+- 4-bit quantization interferes with structural signal → FP16 is optimal when using 3Di tokens
+- **Selected model: SaProt-650M FP16 + 3Di** (best average: DAVIS 0.8082 / KIBA 0.8032)
 
 ---
 
@@ -120,17 +186,17 @@ This system is optimized for **known drugs interacting with human protein target
 
 **Known limitations:**
 
-**[Model] SaProt 3D structure tokens not yet utilized**
-SaProt's core design encodes both amino acid sequence and FoldSeek 3Di structural tokens (`"MaEvKc..."`). This project currently uses `'#'` placeholder tokens (`"M#E#T#..."`), meaning SaProt is operating without its structural advantage. This is the primary reason the current DTI performance (Pearson r ≈ 0.79) falls below SOTA methods such as DeepPurpose MPNN_CNN (r ≈ 0.89) and GraphDTA (r ≈ 0.88). The next planned experiment is to apply FoldSeek 3Di tokens using the AlphaFold structures already retrieved by Tool 2.
+**[Model] Performance gap vs SOTA**
+Current best: Pearson r ≈ 0.81. SOTA methods (DeepPurpose MPNN_CNN r ≈ 0.89, GraphDTA r ≈ 0.88) benefit from end-to-end fine-tuning and graph neural network drug encoders. The gap is primarily due to (1) frozen protein encoder and (2) Morgan FP drug encoding vs learned GNN representations. Full fine-tuning was hardware-constrained; this project's contribution is validating SaProt's 3Di structural tokens as effective protein representations in a DTI Agent system.
 
 **[Model] Drug encoder asymmetry**
-The protein encoder (SaProt, 650M params) is orders of magnitude more expressive than the drug encoder (Morgan Fingerprint, 2048-bit binary vector). Morgan FP is a fixed structural descriptor that does not learn from data. Replacing it with a graph neural network (e.g., MPNN) would better match the protein encoder's capacity.
+The protein encoder (SaProt, 650M params) is far more expressive than the drug encoder (Morgan Fingerprint, 2048-bit binary vector). Morgan FP is a fixed structural descriptor that does not learn from data. Replacing it with a graph neural network (e.g., MPNN) would better match the protein encoder's capacity.
 
 **[Data] Human kinase-centric training data**
 DAVIS and KIBA cover human kinases exclusively (442 and 229 kinases respectively). Predictions for viral/bacterial targets, GPCRs, proteases, and nuclear receptors are out-of-distribution and should not be trusted.
 
 **[Usability] Non-English or vague inputs**
-The LLM orchestrator must translate non-English drug names (e.g., "비아그라" → "Sildenafil") and vague target descriptions (e.g., "콜레스테롤 합성 효소" → gene name "HMGCR") before Tool 4/5 can resolve them. This depends on the LLM's domain knowledge.
+The LLM orchestrator must translate non-English drug names (e.g., "비아그라" → "Sildenafil") and vague target descriptions before Tool 4/5 can resolve them. This depends on the LLM's domain knowledge.
 
 ---
 
@@ -141,23 +207,9 @@ The LLM orchestrator must translate non-English drug names (e.g., "비아그라"
 | Phase 1 | DAVIS benchmark — 4 model variants | ✅ Complete |
 | Phase 2a | KIBA cross-dataset validation | ✅ Complete |
 | Phase 2b | Agent Tools 1–5 implementation | ✅ Complete |
-| **Phase 3** | **FoldSeek 3Di token integration + re-evaluation** | **🔄 Next** |
-| Phase 4 | smolagents orchestration + end-to-end demo | ⏳ Planned |
+| Phase 3 | FoldSeek 3Di token integration + re-evaluation | ✅ Complete |
+| **Phase 4** | **smolagents orchestration + end-to-end demo** | **🔄 Next** |
 | Phase 5 | BindingDB expansion (viral/non-kinase targets) | ⏳ Planned |
-
-**Phase 3 detail — FoldSeek 3Di integration:**
-```
-AlphaFold PDB (Tool 2, already working)
-      ↓
-FoldSeek → per-residue 3Di tokens
-      ↓
-aa_to_sa(): "M#E#T#..." → "MaEvKc..."
-      ↓
-Re-embed DAVIS/KIBA proteins → retrain MLP head (~60s)
-      ↓
-Compare r: '#' baseline vs real 3Di
-```
-Expected outcome: performance improvement consistent with SaProt paper findings, or a concrete ablation result that quantifies the structural token contribution.
 
 ---
 
@@ -165,7 +217,7 @@ Expected outcome: performance improvement consistent with SaProt paper findings,
 
 | Document | Contents |
 |----------|----------|
-| [Phase 1 Training Report](docs/PHASE1_TRAINING_EXPERIMENTS.md) | DAVIS/KIBA results, quantization comparison, key findings |
-| [Phase 1 Pipeline Design](docs/PHASE1_REFERENCE_PIPELINE.md) | Why SaProt over DeepPurpose, architecture rationale |
+| [Phase 1 Training Report](docs/PHASE1_TRAINING_EXPERIMENTS.md) | DAVIS/KIBA/3Di results, model selection, key findings |
+| [Phase 1 Pipeline Design](docs/PHASE1_REFERENCE_PIPELINE.md) | Architecture rationale, why frozen encoder + MLP |
 | [Phase 1 Experiment Log](docs/PHASE1_EXPERIMENT_LOG.md) | V1→V3 iteration history, failure analysis |
 | [Phase 2 Agent Tools](docs/PHASE2_AGENT_TOOLS.md) | Tool 2–5 implementation details and test results |

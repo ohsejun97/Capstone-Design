@@ -1,0 +1,18 @@
+{
+  "run_name": "SaProt-650M-8bit-kiba-3di",
+  "dataset": "kiba",
+  "encoder": "650M",
+  "quant": "8bit",
+  "lora": false,
+  "use_3di": true,
+  "lora_r": null,
+  "prot_dim": 1280,
+  "timestamp": "2026-03-30T04:04:44.929469",
+  "test_pearson_r": 0.7997076511383057,
+  "test_p_value": 0.0,
+  "best_val_r": 0.8100495338439941,
+  "epochs_trained": 50,
+  "train_time_sec": 199.8,
+  "n_test": 23652,
+  "n_train": 82777
+}

@@ -59,6 +59,8 @@ parser.add_argument("--lr",         type=float, default=0.0,
                     help="0=auto (frozen:1e-3, LoRA:5e-5)")
 parser.add_argument("--patience",   type=int,   default=10)
 parser.add_argument("--seed",       type=int,   default=42)
+parser.add_argument("--use_3di",    action="store_true",
+                    help="Use FoldSeek 3Di structural tokens instead of '#' placeholder")
 args = parser.parse_args()
 
 # 자동 기본값
@@ -83,12 +85,13 @@ run_name = f"SaProt-{args.encoder}"
 if args.quant != "none": run_name += f"-{args.quant}"
 if args.lora:            run_name += "-lora"
 run_name += f"-{args.dataset}"
+if args.use_3di:         run_name += "-3di"
 
 print("=" * 60)
 print(f"  DTI Training — {run_name}")
 print(f"  Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 print(f"  Device: {DEVICE} | Dataset: {args.dataset.upper()} | "
-      f"Encoder: {args.encoder} | Quant: {args.quant}")
+      f"Encoder: {args.encoder} | Quant: {args.quant} | 3Di: {args.use_3di}")
 print(f"  batch={args.batch_size} | lr={args.lr}")
 print("=" * 60, "\n")
 
@@ -180,8 +183,32 @@ print(f"    ✅ {n_params:.0f}M params total | {n_trainable:.2f}M trainable\n")
 # ══════════════════════════════════════════════════════════════════════════════
 # [3] 단백질 처리 — frozen: 임베딩 캐시 / LoRA: 토큰 사전 계산
 # ══════════════════════════════════════════════════════════════════════════════
+# ── 3Di 토큰 캐시 로드 (--use_3di) ───────────────────────────────────────────
+import hashlib as _hashlib
+
+_tokens_3di_cache: dict = {}
+if args.use_3di:
+    from tools.foldseek_tool import aa_seq_to_sa_tokens, check_foldseek
+    if not check_foldseek():
+        sys.exit("❌ foldseek not found in PATH. Install from https://github.com/steineggerlab/foldseek/releases")
+    _cache_3di_path = Path(f"./cache/3di_tokens_{args.dataset}.json")
+    if not _cache_3di_path.exists():
+        sys.exit(f"❌ 3Di 캐시 없음: {_cache_3di_path}\n"
+                 f"   먼저 실행: python scripts/build_3di_cache.py --dataset {args.dataset}")
+    with open(_cache_3di_path) as _f:
+        _tokens_3di_cache = json.load(_f)
+    _n_ok = sum(1 for v in _tokens_3di_cache.values() if v.get("status") == "ok")
+    print(f"    3Di 캐시 로드: {len(_tokens_3di_cache)}개 단백질 (ok={_n_ok})\n")
+
+
 def aa_to_sa(seq: str) -> str:
-    return "".join(aa + "#" for aa in seq)
+    if not args.use_3di:
+        return "".join(aa + "#" for aa in seq)
+    h = _hashlib.md5(seq.encode()).hexdigest()
+    entry = _tokens_3di_cache.get(h, {})
+    tokens_3di = entry.get("tokens_3di") if entry.get("status") == "ok" else None
+    return aa_seq_to_sa_tokens(seq, tokens_3di)
+
 
 unique_targets = list(dict.fromkeys(X_targets))
 tgt2idx        = {t: i for i, t in enumerate(unique_targets)}
@@ -189,7 +216,8 @@ tgt_indices    = np.array([tgt2idx[t] for t in X_targets])
 
 if not args.lora:
     # ── frozen 모드: 임베딩 캐시 ─────────────────────────────────────────────
-    cache_path = Path(f"./cache/prot_embs_{args.dataset}_{args.encoder}_{args.quant}.pt")
+    _3di_tag   = "_3di" if args.use_3di else ""
+    cache_path = Path(f"./cache/prot_embs_{args.dataset}_{args.encoder}_{args.quant}{_3di_tag}.pt")
     cache_path.parent.mkdir(exist_ok=True)
 
     if cache_path.exists():
@@ -491,6 +519,7 @@ result = {
     "encoder":        args.encoder,
     "quant":          args.quant,
     "lora":           args.lora,
+    "use_3di":        args.use_3di,
     "lora_r":         args.lora_r if args.lora else None,
     "prot_dim":       prot_dim,
     "timestamp":      datetime.now().isoformat(),
