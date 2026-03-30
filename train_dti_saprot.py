@@ -16,7 +16,7 @@ SaProt + DTI 회귀 헤드를 DAVIS 연속 pKd 데이터로 학습 및 평가
   python train_dti_saprot.py --encoder 650M --quant 4bit --lora   # LoRA 4bit
 """
 
-import os, sys, time, json, argparse
+import os, sys, time, json, argparse, math
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -59,8 +59,10 @@ parser.add_argument("--lr",         type=float, default=0.0,
                     help="0=auto (frozen:1e-3, LoRA:5e-5)")
 parser.add_argument("--patience",   type=int,   default=10)
 parser.add_argument("--seed",       type=int,   default=42)
-parser.add_argument("--use_3di",    action="store_true",
+parser.add_argument("--use_3di",      action="store_true",
                     help="Use FoldSeek 3Di structural tokens instead of '#' placeholder")
+parser.add_argument("--drug_encoder", default="morgan", choices=["morgan", "gnn"],
+                    help="Drug encoder: morgan=Morgan FP (fixed), gnn=MPNN (trainable)")
 args = parser.parse_args()
 
 # 자동 기본값
@@ -82,10 +84,11 @@ SAPROT_IDS  = {"650M": "westlake-repl/SaProt_650M_AF2",
 SAPROT_DIMS = {"650M": 1280, "35M": 480}
 
 run_name = f"SaProt-{args.encoder}"
-if args.quant != "none": run_name += f"-{args.quant}"
-if args.lora:            run_name += "-lora"
+if args.quant != "none":        run_name += f"-{args.quant}"
+if args.lora:                   run_name += "-lora"
 run_name += f"-{args.dataset}"
-if args.use_3di:         run_name += "-3di"
+if args.use_3di:                run_name += "-3di"
+if args.drug_encoder == "gnn":  run_name += "-gnn"
 
 print("=" * 60)
 print(f"  DTI Training — {run_name}")
@@ -257,32 +260,61 @@ else:
     print(f"    ✅ 토큰화 완료 (max_len={MAX_LEN})\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# [4] 약물 Morgan Fingerprint
+# [4] 약물 인코딩 (Morgan FP 또는 GNN 그래프 변환)
 # ══════════════════════════════════════════════════════════════════════════════
-print("[4] 약물 Morgan FP 계산 (2048-bit)...")
-
-def smiles_to_fp(smiles):
-    mol = Chem.MolFromSmiles(smiles)
-    if mol is None: return None
-    fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=2048)
-    return np.array(list(fp), dtype=np.float32)
-
 unique_drugs  = list(dict.fromkeys(X_drugs))
 drug2idx      = {d: i for i, d in enumerate(unique_drugs)}
-drug_fps      = np.zeros((len(unique_drugs), 2048), dtype=np.float32)
-n_invalid     = 0
-for i, smi in enumerate(unique_drugs):
-    fp = smiles_to_fp(smi)
-    if fp is not None: drug_fps[i] = fp
-    else: n_invalid += 1
-drug_fps     = torch.tensor(drug_fps)
-drug_indices = np.array([drug2idx[d] for d in X_drugs])
-print(f"    ✅ {len(unique_drugs)}개 약물 | 유효하지 않은 SMILES: {n_invalid}개\n")
+drug_indices  = np.array([drug2idx[d] for d in X_drugs])
+
+if args.drug_encoder == "morgan":
+    print("[4] 약물 Morgan FP 계산 (2048-bit, radius=2)...")
+
+    def smiles_to_fp(smiles):
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None: return None
+        fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=2048)
+        return np.array(list(fp), dtype=np.float32)
+
+    drug_fps  = np.zeros((len(unique_drugs), 2048), dtype=np.float32)
+    n_invalid = 0
+    for i, smi in enumerate(unique_drugs):
+        fp = smiles_to_fp(smi)
+        if fp is not None: drug_fps[i] = fp
+        else: n_invalid += 1
+    drug_fps = torch.tensor(drug_fps)
+    print(f"    ✅ {len(unique_drugs)}개 약물 | 유효하지 않은 SMILES: {n_invalid}개\n")
+    DRUG_DIM  = 2048
+    gnn_encoder = None
+
+else:  # gnn
+    print("[4] 약물 분자 그래프 변환 (GNN 입력용)...")
+    from tools.gnn_drug_encoder import (
+        smiles_to_graph, collate_graphs, GNNDrugEncoder, GNN_OUT_DIM,
+    )
+    drug_graphs = []
+    n_invalid   = 0
+    _fallback_fp = torch.zeros(GNN_OUT_DIM)  # invalid SMILES fallback
+    for smi in unique_drugs:
+        g = smiles_to_graph(smi)
+        if g is None:
+            drug_graphs.append(None)
+            n_invalid += 1
+        else:
+            drug_graphs.append(g)
+    # invalid → 가장 작은 유효 그래프로 대체
+    _valid_g = next(g for g in drug_graphs if g is not None)
+    drug_graphs = [g if g is not None else _valid_g for g in drug_graphs]
+    print(f"    ✅ {len(unique_drugs)}개 약물 | 그래프 변환 실패: {n_invalid}개\n")
+    DRUG_DIM    = GNN_OUT_DIM  # 256
+    gnn_encoder = GNNDrugEncoder().to(DEVICE)
+    n_gnn = sum(p.numel() for p in gnn_encoder.parameters()) / 1e6
+    print(f"    GNNDrugEncoder: {n_gnn:.2f}M params\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # [5] 데이터셋 & 데이터로더
 # ══════════════════════════════════════════════════════════════════════════════
 class FrozenDataset(Dataset):
+    """Morgan FP 모드: (prot_emb, drug_fp, label)"""
     def __init__(self, indices):
         self.prot_idx = tgt_indices[indices]
         self.drug_idx = drug_indices[indices]
@@ -293,6 +325,18 @@ class FrozenDataset(Dataset):
                 drug_fps[self.drug_idx[i]],
                 torch.tensor(self.labels[i], dtype=torch.float32))
 
+class FrozenDatasetGNN(Dataset):
+    """GNN 모드: (prot_emb, graph_tuple, label)"""
+    def __init__(self, indices):
+        self.prot_idx = tgt_indices[indices]
+        self.drug_idx = drug_indices[indices]
+        self.labels   = y[indices]
+    def __len__(self): return len(self.labels)
+    def __getitem__(self, i):
+        return (prot_embs[self.prot_idx[i]],
+                drug_graphs[self.drug_idx[i]],  # (nf, adj, bf) tuple
+                torch.tensor(self.labels[i], dtype=torch.float32))
+
 class LoRADataset(Dataset):
     def __init__(self, indices):
         self.prot_idx = tgt_indices[indices]
@@ -300,7 +344,7 @@ class LoRADataset(Dataset):
         self.labels   = y[indices]
     def __len__(self): return len(self.labels)
     def __getitem__(self, i):
-        return (self.prot_idx[i],          # int → collate 시 토큰 로드
+        return (self.prot_idx[i],
                 drug_fps[self.drug_idx[i]],
                 torch.tensor(self.labels[i], dtype=torch.float32))
 
@@ -312,6 +356,11 @@ def lora_collate(batch):
     masks_pad = torch.nn.utils.rnn.pad_sequence(masks, batch_first=True, padding_value=0)
     return ids_pad, masks_pad, torch.stack(drug_fps_b), torch.tensor(labels)
 
+def gnn_collate(batch):
+    prots, graphs, labels = zip(*batch)
+    nf_pad, adj_pad, bf_pad, mask = collate_graphs(list(graphs))
+    return torch.stack(prots), (nf_pad, adj_pad, bf_pad, mask), torch.stack(labels)
+
 if args.lora:
     DS = LoRADataset
     train_loader = DataLoader(DS(tr_idx),  batch_size=args.batch_size,
@@ -320,6 +369,13 @@ if args.lora:
                               shuffle=False, collate_fn=lora_collate, num_workers=0)
     test_loader  = DataLoader(DS(te_idx),  batch_size=args.batch_size,
                               shuffle=False, collate_fn=lora_collate, num_workers=0)
+elif args.drug_encoder == "gnn":
+    train_loader = DataLoader(FrozenDatasetGNN(tr_idx),  batch_size=args.batch_size,
+                              shuffle=True,  collate_fn=gnn_collate, num_workers=0)
+    val_loader   = DataLoader(FrozenDatasetGNN(val_idx), batch_size=128,
+                              shuffle=False, collate_fn=gnn_collate, num_workers=0)
+    test_loader  = DataLoader(FrozenDatasetGNN(te_idx),  batch_size=128,
+                              shuffle=False, collate_fn=gnn_collate, num_workers=0)
 else:
     train_loader = DataLoader(FrozenDataset(tr_idx),  batch_size=args.batch_size,
                               shuffle=True,  num_workers=2, pin_memory=True)
@@ -351,9 +407,9 @@ class DTIHead(nn.Module):
             torch.cat([self.prot_enc(prot_emb), self.drug_enc(drug_fp)], dim=-1)
         ).squeeze(-1)
 
-head = DTIHead(prot_dim).to(DEVICE)
+head = DTIHead(prot_dim, drug_dim=DRUG_DIM).to(DEVICE)
 n_head = sum(p.numel() for p in head.parameters()) / 1e6
-print(f"[5] DTI 헤드: {n_head:.2f}M params\n")
+print(f"[5] DTI 헤드: {n_head:.2f}M params  (drug_dim={DRUG_DIM})\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # [7] 옵티마이저 — LoRA: SaProt 어댑터 + 헤드 / frozen: 헤드만
@@ -362,7 +418,14 @@ if args.lora:
     lora_params = [p for p in saprot.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(
         [{"params": lora_params, "lr": args.lr},
-         {"params": head.parameters(), "lr": args.lr * 10}],  # 헤드는 10배 lr
+         {"params": head.parameters(), "lr": args.lr * 10}],
+        weight_decay=1e-4,
+    )
+elif args.drug_encoder == "gnn":
+    # GNN + head 함께 학습 (protein은 frozen)
+    optimizer = torch.optim.Adam(
+        [{"params": gnn_encoder.parameters(), "lr": args.lr},
+         {"params": head.parameters(),        "lr": args.lr * 5}],
         weight_decay=1e-4,
     )
 else:
@@ -398,10 +461,22 @@ print("    " + "-" * 42)
 
 t_start = time.time()
 
+def _get_drug_emb(batch_drug):
+    """GNN 모드: graph tuple → drug embedding. Morgan 모드: 그대로 반환."""
+    if args.drug_encoder == "gnn":
+        nf, adj, bf, mask = batch_drug
+        nf   = nf.to(DEVICE)
+        adj  = adj.to(DEVICE)
+        bf   = bf.to(DEVICE)
+        mask = mask.to(DEVICE)
+        return gnn_encoder(nf, adj, bf, mask)
+    return batch_drug.to(DEVICE)
+
 for epoch in range(1, args.epochs + 1):
     # ── train ──────────────────────────────────────────────────────────────
     head.train()
-    if args.lora: saprot.train()
+    if args.lora:                   saprot.train()
+    if args.drug_encoder == "gnn":  gnn_encoder.train()
     train_loss = 0.0
 
     for batch in train_loader:
@@ -412,16 +487,18 @@ for epoch in range(1, args.epochs + 1):
             prot = get_prot_emb(ids, masks)
         else:
             prot, drug, label = batch
-            prot, drug, label = prot.to(DEVICE), drug.to(DEVICE), label.to(DEVICE)
+            prot  = prot.to(DEVICE)
+            label = label.to(DEVICE)
+            drug  = _get_drug_emb(drug)
 
         pred  = head(prot, drug)
         loss  = criterion(pred, label)
         optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(
-            list(head.parameters()) + (list(saprot.parameters()) if args.lora else []),
-            1.0
-        )
+        clip_params = list(head.parameters())
+        if args.lora:                   clip_params += list(saprot.parameters())
+        if args.drug_encoder == "gnn":  clip_params += list(gnn_encoder.parameters())
+        torch.nn.utils.clip_grad_norm_(clip_params, 1.0)
         optimizer.step()
         train_loss += loss.item() * len(label)
 
@@ -430,7 +507,8 @@ for epoch in range(1, args.epochs + 1):
 
     # ── validate ───────────────────────────────────────────────────────────
     head.eval()
-    if args.lora: saprot.eval()
+    if args.lora:                   saprot.eval()
+    if args.drug_encoder == "gnn":  gnn_encoder.eval()
     val_preds, val_labels = [], []
 
     with torch.no_grad():
@@ -442,7 +520,8 @@ for epoch in range(1, args.epochs + 1):
                 prot = get_prot_emb(ids, masks)
             else:
                 prot, drug, label = batch
-                prot, drug = prot.to(DEVICE), drug.to(DEVICE)
+                prot = prot.to(DEVICE)
+                drug = _get_drug_emb(drug)
             pred = head(prot, drug).cpu().numpy()
             val_preds.extend(pred)
             val_labels.extend(label.numpy())
@@ -484,6 +563,8 @@ if args.lora:
     saprot.eval()
 
 test_preds, test_labels = [], []
+if args.drug_encoder == "gnn":
+    gnn_encoder.eval()
 with torch.no_grad():
     for batch in test_loader:
         if args.lora:
@@ -493,12 +574,67 @@ with torch.no_grad():
             prot = get_prot_emb(ids, masks)
         else:
             prot, drug, label = batch
-            prot, drug = prot.to(DEVICE), drug.to(DEVICE)
+            prot  = prot.to(DEVICE)
+            drug  = _get_drug_emb(drug)
         pred = head(prot, drug).cpu().numpy()
         test_preds.extend(pred)
         test_labels.extend(label.numpy())
 
 test_r, test_p = pearsonr(test_preds, test_labels)
+
+# ── 추가 지표 계산 ─────────────────────────────────────────────────────────────
+_pred = np.array(test_preds, dtype=np.float32)
+_true = np.array(test_labels, dtype=np.float32)
+test_rmse = float(math.sqrt(np.mean((_pred - _true) ** 2)))
+test_mae  = float(np.mean(np.abs(_pred - _true)))
+
+def _concordance_index(y_true, y_pred, sample=3000, seed=42):
+    rng = np.random.default_rng(seed)
+    idx = rng.choice(len(y_true), min(sample, len(y_true)), replace=False)
+    yt, yp = y_true[idx], y_pred[idx]
+    concordant = total = 0
+    for i in range(len(yt)):
+        for j in range(i + 1, len(yt)):
+            if yt[i] == yt[j]: continue
+            total += 1
+            if (yt[i] > yt[j]) == (yp[i] > yp[j]): concordant += 1
+    return concordant / total if total > 0 else 0.0
+
+test_ci = _concordance_index(_true, _pred)
+
+# ── 추론 속도 측정 (단일 샘플, warmup 제외) ────────────────────────────────────
+head.eval()
+_n_speed = min(200, len(te_idx))
+_speed_times = []
+with torch.no_grad():
+    # warmup
+    _b = next(iter(test_loader))
+    if args.lora:
+        _ids, _masks, _drug, _ = _b
+        _prot_s = get_prot_emb(_ids[:1].to(DEVICE), _masks[:1].to(DEVICE))
+        _drug_s  = _drug[:1].to(DEVICE)
+    else:
+        _prot_s, _drug_s_raw, _ = _b
+        _prot_s = _prot_s[:1].to(DEVICE)
+        if args.drug_encoder == "gnn":
+            _drug_s = _get_drug_emb(tuple(t[:1] for t in _drug_s_raw))
+        else:
+            _drug_s = _drug_s_raw[:1].to(DEVICE)
+    head(_prot_s, _drug_s)
+    # 실측
+    for _ in range(_n_speed):
+        if torch.cuda.is_available(): torch.cuda.synchronize()
+        _t0 = time.perf_counter()
+        head(_prot_s, _drug_s)
+        if torch.cuda.is_available(): torch.cuda.synchronize()
+        _speed_times.append((time.perf_counter() - _t0) * 1000)  # ms
+
+infer_ms_mean = round(float(np.mean(_speed_times)), 3)
+infer_ms_std  = round(float(np.std(_speed_times)),  3)
+
+# ── VRAM 사용량 ────────────────────────────────────────────────────────────────
+peak_vram_mb = round(torch.cuda.max_memory_allocated() / 1024**2, 1) \
+               if torch.cuda.is_available() else 0.0
 
 # ══════════════════════════════════════════════════════════════════════════════
 # [11] 결과 저장
@@ -514,35 +650,129 @@ if args.lora:
     torch.save(best_lora_state, out_dir / "lora_adapter.pt")
 
 result = {
-    "run_name":       run_name,
-    "dataset":        args.dataset,
-    "encoder":        args.encoder,
-    "quant":          args.quant,
-    "lora":           args.lora,
-    "use_3di":        args.use_3di,
-    "lora_r":         args.lora_r if args.lora else None,
-    "prot_dim":       prot_dim,
-    "timestamp":      datetime.now().isoformat(),
-    "test_pearson_r": float(test_r),
-    "test_p_value":   float(test_p),
-    "best_val_r":     float(best_val_r),
-    "epochs_trained": len(history),
-    "train_time_sec": round(train_time, 1),
-    "n_test":         len(te_idx),
-    "n_train":        len(tr_idx),
+    "run_name":          run_name,
+    "dataset":           args.dataset,
+    "encoder":           args.encoder,
+    "quant":             args.quant,
+    "lora":              args.lora,
+    "use_3di":           args.use_3di,
+    "drug_encoder":      args.drug_encoder,
+    "lora_r":            args.lora_r if args.lora else None,
+    "prot_dim":          prot_dim,
+    "timestamp":         datetime.now().isoformat(),
+    # ── 성능 지표
+    "test_pearson_r":    round(float(test_r),   4),
+    "test_rmse":         round(test_rmse,        4),
+    "test_mae":          round(test_mae,         4),
+    "test_ci":           round(test_ci,          4),
+    "test_p_value":      float(test_p),
+    "best_val_r":        round(float(best_val_r), 4),
+    # ── 학습 정보
+    "epochs_trained":    len(history),
+    "train_time_sec":    round(train_time, 1),
+    "n_train":           len(tr_idx),
+    "n_val":             len(val_idx),
+    "n_test":            len(te_idx),
+    # ── 추론 속도 / 하드웨어
+    "infer_ms_mean":     infer_ms_mean,
+    "infer_ms_std":      infer_ms_std,
+    "peak_vram_mb":      peak_vram_mb,
 }
 with open(out_dir / "result.json", "w") as f:
     json.dump(result, f, indent=2, ensure_ascii=False)
 
-print(f"\n{'='*50}")
-print(f"  모델:      {run_name}")
-print(f"  Pearson R: {test_r:+.4f}  (p={test_p:.2e})")
-print(f"  Val best:  {best_val_r:.4f}")
-print(f"  학습 시간: {train_time:.0f}초")
-if   test_r >= 0.9: print("  ✅✅ 목표 달성! (r ≥ 0.9)")
-elif test_r >= 0.8: print("  ✅  Phase 1 완료 (r ≥ 0.8)")
-elif test_r >= 0.6: print("  △   양호 (r ≥ 0.6)")
-else:               print("  ❌  성능 미달")
-print(f"  결과 저장: {out_dir}/")
-print("=" * 50)
+# ── 마크다운 실험 보고서 ────────────────────────────────────────────────────────
+_perf_mark = ("✅✅ 목표 초과 (r ≥ 0.9)" if test_r >= 0.9 else
+              "✅  목표 달성 (r ≥ 0.85)" if test_r >= 0.85 else
+              "🔄  근접 (r ≥ 0.8)"       if test_r >= 0.8 else
+              "△   양호 (r ≥ 0.6)"       if test_r >= 0.6 else
+              "❌  성능 미달")
+
+_report = f"""# 실험 보고서 — {run_name}
+
+**생성일시:** {result['timestamp']}
+
+---
+
+## 실험 설정
+
+| 항목 | 값 |
+|---|---|
+| 데이터셋 | {args.dataset.upper()} |
+| Protein Encoder | SaProt-{args.encoder} ({args.quant if args.quant != 'none' else 'FP16'}) |
+| Drug Encoder | {'GNN/MPNN (4-layer, 256-dim)' if args.drug_encoder == 'gnn' else 'Morgan FP (radius=2, 2048-bit)'} |
+| FoldSeek 3Di | {'✅ 사용' if args.use_3di else '❌ Placeholder'} |
+| LoRA | {'✅ rank=' + str(args.lora_r) if args.lora else '❌ Frozen'} |
+| Split | Random 70 / 10 / 20 |
+| Train / Val / Test | {len(tr_idx):,} / {len(val_idx):,} / {len(te_idx):,} |
+
+---
+
+## 성능 지표
+
+| 지표 | 값 | 설명 |
+|---|---|---|
+| **Pearson r** | **{test_r:.4f}** | 예측-실측 선형 상관계수 (주 지표) |
+| RMSE | {test_rmse:.4f} | 평균 예측 오차 (pKd 단위) |
+| MAE | {test_mae:.4f} | 평균 절대 오차 (pKd 단위) |
+| CI | {test_ci:.4f} | 결합력 순위 일치도 (0.5=랜덤, 1.0=완벽) |
+| Val best r | {best_val_r:.4f} | 검증셋 최고 Pearson r |
+
+**판정:** {_perf_mark}
+
+### SOTA 비교
+
+| 모델 | DAVIS Pearson r |
+|---|---|
+| 본 실험 | **{test_r:.4f}** |
+| DeepPurpose MPNN_CNN | ~0.89 (SOTA) |
+| DeepPurpose CNN | ~0.86 |
+| 서열 기반 baseline | ~0.78~0.80 |
+
+---
+
+## 학습 정보
+
+| 항목 | 값 |
+|---|---|
+| 학습 에포크 | {len(history)} |
+| 총 학습 시간 | {train_time:.1f}초 ({train_time/60:.1f}분) |
+| Early stopping | patience={args.patience} |
+
+---
+
+## 추론 속도 / 하드웨어
+
+| 항목 | 값 |
+|---|---|
+| 단일 샘플 추론 시간 | **{infer_ms_mean:.3f} ms** (± {infer_ms_std:.3f} ms) |
+| 추론 속도 | **{1000/infer_ms_mean:.0f} samples/sec** |
+| 학습 중 최대 VRAM | {peak_vram_mb:.1f} MB |
+
+---
+
+## 결과 파일
+
+| 파일 | 내용 |
+|---|---|
+| `result.json` | 전체 지표 요약 |
+| `test_predictions.csv` | 예측값 vs 실측값 |
+| `training_history.csv` | 에포크별 loss / val_r |
+| `dti_head.pt` | 최적 모델 가중치 |
+"""
+
+with open(out_dir / "report.md", "w", encoding="utf-8") as f:
+    f.write(_report)
+
+print(f"\n{'='*56}")
+print(f"  모델:          {run_name}")
+print(f"  Pearson r:     {test_r:.4f}   RMSE: {test_rmse:.4f}   CI: {test_ci:.4f}")
+print(f"  Val best r:    {best_val_r:.4f}")
+print(f"  추론 속도:     {infer_ms_mean:.3f} ms/sample  ({1000/infer_ms_mean:.0f} samples/sec)")
+print(f"  VRAM 최대:     {peak_vram_mb:.0f} MB")
+print(f"  학습 시간:     {train_time:.0f}초")
+print(f"  {_perf_mark}")
+print(f"  결과 저장:     {out_dir}/")
+print(f"  보고서:        {out_dir}/report.md")
+print("=" * 56)
 print("\n[완료]")

@@ -46,15 +46,17 @@ Instead of requiring expert knowledge (UniProt IDs, SMILES strings, database que
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| Phase 1 | DTI model benchmarking (DAVIS, 4 model variants) | ✅ Complete |
-| Phase 2a | Cross-dataset generalization validation (KIBA) | ✅ Complete |
-| Phase 2b | Agent Tools 1–5 implementation | ✅ Complete |
-| Phase 3 | FoldSeek 3Di token integration + re-evaluation | ✅ Complete |
-| Phase 4 | Agent orchestration — smolagents | 🔄 Next |
-| Phase 5 | End-to-end demo | ⏳ Planned |
+| Phase 1 | **DTI Model Development** | 1a–1c ✅ / 1d 🔄 |
+| ↳ 1a | DAVIS baseline benchmarking (4 model variants) | ✅ Complete |
+| ↳ 1b | KIBA cross-dataset generalization validation | ✅ Complete |
+| ↳ 1c | FoldSeek 3Di structural token integration | ✅ Complete |
+| ↳ 1d | GNN drug encoder + cold-split evaluation | 🔄 Next |
+| Phase 2 | **Agent Tools** (Tool 1–5 implementation) | ✅ Complete |
+| Phase 3 | **Agent Orchestration** — smolagents ReAct | ⏳ Planned |
+| Phase 4 | **End-to-End Demo** | ⏳ Planned |
 
 **Best DTI model:** SaProt-650M FP16 + 3Di — DAVIS r=0.8082, KIBA r=0.8032
-(see [Phase 1 Training Report](docs/PHASE1_TRAINING_EXPERIMENTS.md))
+(see [Training Report](docs/PHASE1_TRAINING_EXPERIMENTS.md))
 
 ---
 
@@ -95,24 +97,36 @@ python experiments/visualize_results.py
 
 ## Architecture
 
-### Why frozen SaProt + MLP head?
+### Research hypothesis and design rationale
 
-Full fine-tuning of SaProt-650M requires >4GB VRAM and was not feasible on the project hardware (GTX 1650 SUPER, 4GB). LoRA fine-tuning was attempted but abandoned due to training speed (~2.5h/epoch on a GPU without Tensor Cores).
+**SaProt is not a DTI model.** SaProt is a Protein Language Model (PLM) — it encodes proteins only. This project uses SaProt as the *protein encoder component* of a DTI system, paired with a separate drug encoder.
 
-Instead, this project treats SaProt as a **fixed protein encoder** and trains only a small MLP head to predict binding affinity. This separates concerns clearly:
+A DTI prediction system requires two encoders:
+```
+Drug encoder   : drug chemical structure  → vector
+Protein encoder: protein sequence + 3D   → vector
+                                           → MLP Head → pKd (binding affinity)
+```
+
+**The two bottlenecks in existing DTI research:**
+
+1. **Protein encoder lacks 3D structure.** Models like DeepPurpose use CNN or AAC descriptors that operate on sequence only. Binding sites are determined by 3D conformation, not sequence alone. SaProt (a structure-aware PLM) addresses this via FoldSeek 3Di tokens — but DTI-specific fine-tuning of SaProt requires >16GB VRAM (infeasible here). So SaProt is used **frozen**: its general protein representations are leveraged as-is.
+
+2. **Drug encoder has no learnable representation.** Morgan Fingerprint is a deterministic bit vector computed from SMILES with no trainable parameters. It loses global molecular topology. This is the primary cause of the gap vs SOTA (r=0.81 vs 0.89). **Phase 1d plan:** replace with a GNN (AttentiveFP/MPNN) that learns directly from molecular graphs.
+
+**Core hypothesis:** Independently improving both encoders — protein via 3Di structural tokens, drug via GNN — closes the performance gap without full fine-tuning, achieving DAVIS r ≥ 0.85 within 4GB VRAM.
 
 ```
-SMILES  → Morgan Fingerprint (2048-bit, RDKit, fixed)    ─┐
-                                                           ├→ MLP Head → pKd
-AA seq  → SA tokens → SaProt-650M (frozen, FP16)          ─┘
-               ↑
+SMILES → [Phase 1a–1c] Morgan FP (fixed)           ─┐
+          [Phase 1d]    GNN encoder (learned)        ├→ MLP Head → pKd
+AA seq → SA tokens → SaProt-650M (frozen, FP16)    ─┘
+              ↑
   "MaEvKc..." (AA + FoldSeek 3Di structural tokens)
 ```
 
-- **SaProt** encodes protein sequence + 3D structural context (3Di tokens from FoldSeek)
-- **Morgan FP** encodes drug chemical structure as a fixed bit vector
-- **MLP head** (2.4M params) learns the binding affinity relationship between the two
-- SaProt weights are never updated — only the MLP head is trained (~3 min on DAVIS)
+- **SaProt** (frozen): encodes protein sequence + 3D structure context via 3Di tokens
+- **Drug encoder**: Morgan FP baseline → GNN replacement in Phase 1d
+- **MLP head** (~2.4M params): the only component trained on DTI data (~3 min on DAVIS)
 
 ### SA Token Format
 
@@ -186,11 +200,14 @@ This system is optimized for **known drugs interacting with human protein target
 
 **Known limitations:**
 
-**[Model] Performance gap vs SOTA**
-Current best: Pearson r ≈ 0.81. SOTA methods (DeepPurpose MPNN_CNN r ≈ 0.89, GraphDTA r ≈ 0.88) benefit from end-to-end fine-tuning and graph neural network drug encoders. The gap is primarily due to (1) frozen protein encoder and (2) Morgan FP drug encoding vs learned GNN representations. Full fine-tuning was hardware-constrained; this project's contribution is validating SaProt's 3Di structural tokens as effective protein representations in a DTI Agent system.
+**[Protein encoder] SaProt is frozen — no DTI-specific adaptation**
+SaProt-650M full fine-tuning requires >16GB VRAM (infeasible). LoRA was attempted but abandoned (2.5h/epoch, no Tensor Cores on GTX 1650 SUPER). SaProt is therefore used as a general protein encoder — its 3Di-aware representations are strong, but not tuned for DTI specifically.
 
-**[Model] Drug encoder asymmetry**
-The protein encoder (SaProt, 650M params) is far more expressive than the drug encoder (Morgan Fingerprint, 2048-bit binary vector). Morgan FP is a fixed structural descriptor that does not learn from data. Replacing it with a graph neural network (e.g., MPNN) would better match the protein encoder's capacity.
+**[Drug encoder] Morgan FP — primary performance bottleneck**
+Morgan Fingerprint is a deterministic bit vector with zero learnable parameters (`AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=2048)`). It encodes local atomic neighbourhoods up to radius 2 but loses global molecular topology. SOTA DTI methods (MPNN_CNN r ≈ 0.89) use GNN drug encoders that learn directly from molecular graphs. The r=0.81 vs 0.89 gap is primarily attributable to this drug encoder gap. **Phase 1d:** replace with AttentiveFP or MPNN.
+
+**[Evaluation] Random split may overestimate generalization**
+Current train/val/test split is random 70/10/20. Because DAVIS has only 68 unique drugs and 442 unique proteins, the same drug–protein entities appear in both train and test sets. This risks overestimating performance on truly unseen molecules. Cold-drug split (test drugs never seen during training) and cold-target split (test proteins never seen) are planned for Phase 4 to establish more realistic generalization bounds.
 
 **[Data] Human kinase-centric training data**
 DAVIS and KIBA cover human kinases exclusively (442 and 229 kinases respectively). Predictions for viral/bacterial targets, GPCRs, proteases, and nuclear receptors are out-of-distribution and should not be trusted.
@@ -204,12 +221,13 @@ The LLM orchestrator must translate non-English drug names (e.g., "비아그라"
 
 | Phase | Task | Status |
 |-------|------|--------|
-| Phase 1 | DAVIS benchmark — 4 model variants | ✅ Complete |
-| Phase 2a | KIBA cross-dataset validation | ✅ Complete |
-| Phase 2b | Agent Tools 1–5 implementation | ✅ Complete |
-| Phase 3 | FoldSeek 3Di token integration + re-evaluation | ✅ Complete |
-| **Phase 4** | **smolagents orchestration + end-to-end demo** | **🔄 Next** |
-| Phase 5 | BindingDB expansion (viral/non-kinase targets) | ⏳ Planned |
+| Phase 1a | DAVIS baseline benchmark — 4 model variants | ✅ Complete |
+| Phase 1b | KIBA cross-dataset validation | ✅ Complete |
+| Phase 1c | FoldSeek 3Di token integration + re-evaluation | ✅ Complete |
+| **Phase 1d** | **GNN drug encoder (AttentiveFP/MPNN) + cold-split evaluation** | **🔄 Next** |
+| Phase 2 | Agent Tools 1–5 implementation | ✅ Complete |
+| Phase 3 | smolagents Agent orchestration | ⏳ Planned |
+| Phase 4 | End-to-end demo | ⏳ Planned |
 
 ---
 
@@ -217,6 +235,7 @@ The LLM orchestrator must translate non-English drug names (e.g., "비아그라"
 
 | Document | Contents |
 |----------|----------|
+| [Evaluation Framework](docs/EVALUATION_FRAMEWORK.md) | 지표 정의(Pearson r / RMSE / CI), 비교 분석 프레임워크, 결과 서술 기준 |
 | [Phase 1 Training Report](docs/PHASE1_TRAINING_EXPERIMENTS.md) | DAVIS/KIBA/3Di results, model selection, key findings |
 | [Phase 1 Pipeline Design](docs/PHASE1_REFERENCE_PIPELINE.md) | Architecture rationale, why frozen encoder + MLP |
 | [Phase 1 Experiment Log](docs/PHASE1_EXPERIMENT_LOG.md) | V1→V3 iteration history, failure analysis |

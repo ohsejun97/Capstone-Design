@@ -177,11 +177,38 @@ regressor: Linear(512→256) → GELU → Dropout(0.1) → Linear(256→64) → 
 
 ---
 
+## 평가 방법론 한계 — Random Split
+
+현재 학습/검증/테스트 분할은 **Random 70/10/20**으로, DAVIS 30,056 쌍을 무작위 인덱스로 나눈다.
+
+**문제:** DAVIS는 442개 단백질 × 68개 약물의 전수(complete) 행렬이다. Random split 하면 동일 단백질 또는 동일 약물이 Train과 Test에 모두 등장한다. 즉, 테스트 단백질과 동일한 단백질에 다른 약물이 결합하는 데이터가 이미 학습에 포함된 상태다. 이는 **데이터 누수(data leakage)** 위험이 있으며, 실제 generalization 성능을 과대추정할 수 있다.
+
+| Split 방식 | 설명 | 난이도 |
+|---|---|---|
+| Random (현재) | 쌍 단위 무작위 분할 | 쉬움 (leakage 위험) |
+| Cold-drug | 테스트 약물이 학습에 미등장 | 중간 |
+| Cold-target | 테스트 단백질이 학습에 미등장 | 어려움 (실제 신약 스크리닝 시나리오) |
+
+**Phase 4 계획:** Cold-target split 추가 평가. Random split 결과(r ≈ 0.81)와 Cold-target split 결과를 모두 보고하여 성능 신뢰도를 확보한다.
+
+---
+
 ## 다음 단계 (Phase 4)
 
 ```
-Phase 4: smolagents Agent 오케스트레이션
-  - Tool 1 (DTI): SaProt-650M FP16 + 3Di 모델로 교체
+Phase 4-A: Drug Encoder 교체 (성능 향상)
+  - 현행: Morgan FP (결정론적 비트벡터, 학습 없음)
+  - 목표: GNN 기반 drug encoder (AttentiveFP or MPNN)
+    → SMILES → 분자 그래프 → GNN → learned drug embedding
+    → SaProt frozen embedding과 concat → DTI 헤드 재학습
+  - 기대 효과: r ≈ 0.85+ (SOTA r=0.89 대비 격차 축소)
+
+Phase 4-B: 평가 방법론 보완
+  - Cold-target split으로 generalization 재검증
+  - Random split 결과와 병기
+
+Phase 4-C: smolagents Agent 오케스트레이션
+  - Tool 1 (DTI): GNN + SaProt-650M FP16 + 3Di 모델로 교체
   - 자연어 쿼리 → Tool 선택 → 결과 종합
 
 Phase 5: End-to-End 데모
