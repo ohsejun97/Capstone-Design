@@ -92,15 +92,18 @@ CI = 0.86 현재 본 연구 수준
 
 ### 비교 ③ SOTA 대비 상대적 위치 — "저사양에서도 경쟁력이 있는가?"
 
-**비교 대상:** 본 연구 vs DeepPurpose baseline vs SOTA
+**비교 대상:** 본 연구 vs DeepPurpose(2020) vs ConPLex(2023) vs SOTA
 **결론 조건:** 유사하거나 그 이상의 성능을 4GB VRAM 환경에서 달성하면 "저사양 환경에서도 실용적 성능을 낼 수 있다"
 
-| 모델 | Drug Encoder | Protein Encoder | DAVIS r | VRAM |
-|---|---|---|---|---|
-| DeepPurpose CNN | Morgan FP | CNN (서열만) | ~0.86 | ~2GB |
-| DeepPurpose MPNN | MPNN (GNN) | CNN (서열만) | ~0.89 | ~2GB |
-| **본 연구 (현재)** | **Morgan FP** | **SaProt + 3Di (frozen)** | **0.81** | **~2GB** |
-| **본 연구 (목표)** | **GNN** | **SaProt + 3Di (frozen)** | **≥ 0.85** | **~2GB** |
+| 모델 | 연도 | Drug Encoder | Protein Encoder | DAVIS r | VRAM |
+|---|---|---|---|---|---|
+| DeepPurpose CNN | 2020 | Morgan FP | CNN (서열만, 학습) | ~0.86 | ~2GB |
+| DeepPurpose MPNN | 2020 | MPNN (GNN, 학습) | CNN (서열만, 학습) | ~0.89 | ~2GB |
+| ConPLex | 2023 | GNN (학습) | ESM-2 (frozen) | ~0.90 | >8GB |
+| **본 연구 (현재)** | **2026** | **Morgan FP** | **SaProt+3Di (frozen)** | **0.81** | **~2GB** |
+| **본 연구 (목표)** | **2026** | **GNN (학습)** | **SaProt+3Di (frozen)** | **≥ 0.85** | **~2GB** |
+
+**ConPLex와의 차별점:** ConPLex는 frozen PLM(ESM-2) + GNN 조합으로 r≈0.90을 달성했으나, 구조 정보 없는 ESM-2를 사용했다. 본 연구는 ESM-2 대신 FoldSeek 3Di 구조 토큰이 내장된 SaProt을 사용하며, Phase 1c에서 3Di 토큰이 실질적 성능 기여(+0.023)를 실험적으로 확인했다.
 
 ---
 

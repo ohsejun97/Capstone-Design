@@ -69,6 +69,8 @@ args = parser.parse_args()
 if args.batch_size == 0:
     if args.lora:
         args.batch_size = 8 if args.encoder == "650M" else 32
+    elif args.drug_encoder == "gnn":
+        args.batch_size = 32   # GNN: dense adj matrix → VRAM 절약
     else:
         args.batch_size = 128
 if args.lr == 0.0:
@@ -372,9 +374,9 @@ if args.lora:
 elif args.drug_encoder == "gnn":
     train_loader = DataLoader(FrozenDatasetGNN(tr_idx),  batch_size=args.batch_size,
                               shuffle=True,  collate_fn=gnn_collate, num_workers=0)
-    val_loader   = DataLoader(FrozenDatasetGNN(val_idx), batch_size=128,
+    val_loader   = DataLoader(FrozenDatasetGNN(val_idx), batch_size=args.batch_size,
                               shuffle=False, collate_fn=gnn_collate, num_workers=0)
-    test_loader  = DataLoader(FrozenDatasetGNN(te_idx),  batch_size=128,
+    test_loader  = DataLoader(FrozenDatasetGNN(te_idx),  batch_size=args.batch_size,
                               shuffle=False, collate_fn=gnn_collate, num_workers=0)
 else:
     train_loader = DataLoader(FrozenDataset(tr_idx),  batch_size=args.batch_size,
@@ -455,9 +457,9 @@ best_val_r, best_head_state, patience_cnt = -1.0, None, 0
 best_lora_state = None
 history = []
 
-print(f"[6] 훈련 시작 (epochs={args.epochs}, batch={args.batch_size}, lr={args.lr})")
-print(f"    {'Epoch':>5} | {'Train Loss':>10} | {'Val r':>7} | {'Best':>7}")
-print("    " + "-" * 42)
+print(f"[6] 훈련 시작 (epochs={args.epochs}, batch={args.batch_size}, lr={args.lr})", flush=True)
+print(f"    {'Epoch':>5} | {'Train Loss':>10} | {'Val r':>7} | {'Best':>7} | {'RMSE':>7} | {'CI':>6}", flush=True)
+print("    " + "-" * 58, flush=True)
 
 t_start = time.time()
 
@@ -527,7 +529,22 @@ for epoch in range(1, args.epochs + 1):
             val_labels.extend(label.numpy())
 
     val_r, _ = pearsonr(val_preds, val_labels)
-    is_best   = val_r > best_val_r
+    _vp = np.array(val_preds, dtype=np.float32)
+    _vl = np.array(val_labels, dtype=np.float32)
+    val_rmse = float(math.sqrt(np.mean((_vp - _vl) ** 2)))
+    # CI (빠른 근사: 샘플 500개)
+    _rng = np.random.default_rng(42)
+    _idx = _rng.choice(len(_vp), min(500, len(_vp)), replace=False)
+    _yt, _yp = _vl[_idx], _vp[_idx]
+    _conc = _tot = 0
+    for _i in range(len(_yt)):
+        for _j in range(_i+1, len(_yt)):
+            if _yt[_i] == _yt[_j]: continue
+            _tot += 1
+            if (_yt[_i] > _yt[_j]) == (_yp[_i] > _yp[_j]): _conc += 1
+    val_ci = _conc / _tot if _tot > 0 else 0.0
+
+    is_best = val_r > best_val_r
 
     if is_best:
         best_val_r    = val_r
@@ -539,13 +556,14 @@ for epoch in range(1, args.epochs + 1):
     else:
         patience_cnt += 1
 
-    history.append({"epoch": epoch, "train_loss": train_loss, "val_r": val_r})
+    history.append({"epoch": epoch, "train_loss": train_loss, "val_r": val_r,
+                    "val_rmse": val_rmse, "val_ci": val_ci})
     marker = " ★" if is_best else ""
     print(f"    {epoch:>5} | {train_loss:>10.4f} | {val_r:>7.4f} | "
-          f"{best_val_r:>7.4f}{marker}")
+          f"{best_val_r:>7.4f}{marker} | {val_rmse:>7.4f} | {val_ci:>6.4f}", flush=True)
 
     if patience_cnt >= args.patience:
-        print(f"\n    Early stopping (patience={args.patience})")
+        print(f"\n    Early stopping (patience={args.patience})", flush=True)
         break
 
 train_time = time.time() - t_start

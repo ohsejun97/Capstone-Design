@@ -22,7 +22,7 @@ ATOM_SYMBOLS = [
 HYBRIDIZATIONS = ['SP','SP2','SP3','SP3D','SP3D2','other']  # 6
 N_ATOM_FEAT = 13 + 11 + 1 + 5 + 1 + 1 + 6  # = 38
 N_BOND_FEAT = 4 + 1 + 1                      # = 6
-MAX_ATOMS   = 100  # 이보다 큰 분자는 잘라냄
+MAX_ATOMS   = 50   # DAVIS max=46, KIBA도 대부분 50 이하
 
 
 def _one_hot(val, choices: list) -> list:

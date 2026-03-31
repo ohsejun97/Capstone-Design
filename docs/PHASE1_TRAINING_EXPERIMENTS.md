@@ -118,7 +118,7 @@ regressor: Linear(512→256) → GELU → Dropout(0.1) → Linear(256→64) → 
 
 | 모델 | Placeholder | 3Di | Delta |
 |------|------------|-----|-------|
-| 650M FP16 | N/A | 0.8032 | - |
+| 650M FP16 | 0.7987 | 0.8032 | +0.0045 |
 | 35M FP16 | 0.7894 | **0.8035** | +0.0141 |
 | 650M-8bit | 0.7916 | 0.7997 | +0.0081 |
 | 650M-4bit | 0.7994 | 0.7935 | -0.0059 |
@@ -159,6 +159,8 @@ regressor: Linear(512→256) → GELU → Dropout(0.1) → Linear(256→64) → 
 | V6-B | 2026-03-30 | SaProt-35M + 3Di (KIBA) | **0.8035** | ✅ |
 | V6-C | 2026-03-30 | SaProt-650M-8bit + 3Di (KIBA) | 0.7997 | ✅ |
 | V6-D | 2026-03-30 | SaProt-650M-4bit + 3Di (KIBA) | 0.7935 | ✅ |
+| V7 | 2026-03-30 | SaProt-650M FP16 Placeholder (KIBA) | 0.7987 | ✅ |
+| V8 | 2026-03-31 | SaProt-650M FP16 + 3Di + GNN (DAVIS) | 🔄 진행 중 | 🔄 |
 
 ---
 
@@ -193,25 +195,34 @@ regressor: Linear(512→256) → GELU → Dropout(0.1) → Linear(256→64) → 
 
 ---
 
-## 다음 단계 (Phase 4)
+## 다음 단계
+
+### Phase 1d — GNN Drug Encoder (🔄 진행 중)
 
 ```
-Phase 4-A: Drug Encoder 교체 (성능 향상)
-  - 현행: Morgan FP (결정론적 비트벡터, 학습 없음)
-  - 목표: GNN 기반 drug encoder (AttentiveFP or MPNN)
-    → SMILES → 분자 그래프 → GNN → learned drug embedding
-    → SaProt frozen embedding과 concat → DTI 헤드 재학습
-  - 기대 효과: r ≈ 0.85+ (SOTA r=0.89 대비 격차 축소)
+현행: Morgan FP (결정론적 비트벡터, 학습 없음, 2048-dim)
+교체: MPNN 기반 GNN drug encoder
+  → SMILES → 분자 그래프 → 4-layer MPNN → 256-dim learned embedding
+  → SaProt frozen embedding과 concat → DTI 헤드 재학습
 
-Phase 4-B: 평가 방법론 보완
-  - Cold-target split으로 generalization 재검증
-  - Random split 결과와 병기
+실험 설계:
+  - DAVIS: SaProt-650M FP16 + 3Di + GNN (진행 중, 2026-03-31)
+  - KIBA:  SaProt-650M FP16 + 3Di + GNN (예정)
+  - Cold-target split 추가 평가 (예정)
 
-Phase 4-C: smolagents Agent 오케스트레이션
-  - Tool 1 (DTI): GNN + SaProt-650M FP16 + 3Di 모델로 교체
-  - 자연어 쿼리 → Tool 선택 → 결과 종합
-
-Phase 5: End-to-End 데모
-  예: "What is the binding affinity of Imatinib to ABL1?"
-  → UniProt 조회 → AlphaFold PDB → 3Di 토큰 → DTI 예측 → 답변
+기대 효과: DAVIS r ≥ 0.85 (Morgan FP 0.8082 대비 +0.04+)
 ```
+
+**관련 논문 비교:**
+
+| 모델 | Protein Encoder | Drug Encoder | DAVIS r | 비고 |
+|------|----------------|--------------|---------|------|
+| DeepPurpose MPNN_CNN | CNN (학습) | MPNN (학습) | ~0.89 | 2020, end-to-end |
+| ConPLex | ESM-2 (frozen) | GNN (학습) | ~0.90 | 2023 PNAS |
+| **본 연구 (목표)** | **SaProt+3Di (frozen)** | **GNN (학습)** | **≥ 0.85** | **4GB VRAM** |
+
+ConPLex(2023)와 동일한 설계(frozen PLM + GNN)이나, protein encoder를 ESM-2 대신 3Di 구조 토큰이 내장된 SaProt으로 교체한 것이 핵심 차별점이다.
+
+### Phase 3 — Agent 오케스트레이션 (⏳ 예정)
+
+Tool 1 (DTI): GNN + SaProt-650M FP16 + 3Di 모델로 교체 후 smolagents 통합
