@@ -160,7 +160,9 @@ regressor: Linear(512→256) → GELU → Dropout(0.1) → Linear(256→64) → 
 | V6-C | 2026-03-30 | SaProt-650M-8bit + 3Di (KIBA) | 0.7997 | ✅ |
 | V6-D | 2026-03-30 | SaProt-650M-4bit + 3Di (KIBA) | 0.7935 | ✅ |
 | V7 | 2026-03-30 | SaProt-650M FP16 Placeholder (KIBA) | 0.7987 | ✅ |
-| V8 | 2026-03-31 | SaProt-650M FP16 + 3Di + GNN (DAVIS) | 🔄 진행 중 | 🔄 |
+| V8-A | 2026-03-31 | SaProt-650M + 3Di + GNN only (DAVIS) | 0.61 (val) | ❌ 데이터 부족 |
+| V8-B | 2026-04-01 | SaProt-650M + 3Di + Morgan+GNN concat 2단계 (DAVIS) | 0.5795 | ❌ |
+| V8-C | 2026-04-01 | SaProt-650M + 3Di + Morgan+GNN concat 2단계 (KIBA) | 0.7191 | △ |
 
 ---
 
@@ -197,21 +199,36 @@ regressor: Linear(512→256) → GELU → Dropout(0.1) → Linear(256→64) → 
 
 ## 다음 단계
 
-### Phase 1d — GNN Drug Encoder (🔄 진행 중)
+### Phase 1d — GNN Drug Encoder (✅ 완료, 결과: 실패)
 
-```
-현행: Morgan FP (결정론적 비트벡터, 학습 없음, 2048-dim)
-교체: MPNN 기반 GNN drug encoder
-  → SMILES → 분자 그래프 → 4-layer MPNN → 256-dim learned embedding
-  → SaProt frozen embedding과 concat → DTI 헤드 재학습
+**실험 결과:**
 
-실험 설계:
-  - DAVIS: SaProt-650M FP16 + 3Di + GNN (진행 중, 2026-03-31)
-  - KIBA:  SaProt-650M FP16 + 3Di + GNN (예정)
-  - Cold-target split 추가 평가 (예정)
+| 방식 | DAVIS r | KIBA r | vs Morgan FP |
+|------|---------|--------|-------------|
+| Morgan FP 단독 (기준) | 0.8082 | 0.8032 | — |
+| GNN 단독 (from scratch) | 0.61 (val only) | — | ❌ |
+| Morgan+GNN concat, 1단계 | ~0.61 (plateau) | — | ❌ |
+| **Morgan+GNN concat, 2단계** | **0.5795** | **0.7191** | **❌ 대폭 하락** |
 
-기대 효과: DAVIS r ≥ 0.85 (Morgan FP 0.8082 대비 +0.04+)
-```
+**실패 원인 분석:**
+
+GNN from-scratch 학습이 실패한 근본 원인은 **DAVIS의 고유 약물 수 부족(68개)**이다.
+
+| 데이터셋 | 고유 약물 수 | GNN 결과 | 해석 |
+|---------|------------|---------|------|
+| DAVIS | 68개 | r=0.58 ❌ | 2M 파라미터 GNN 학습에 턱없이 부족 |
+| KIBA | 2,068개 | r=0.72 △ | 데이터 많을수록 GNN 수렴 가능, 아직 Morgan FP 미달 |
+
+Morgan FP는 수십 년 화학 연구가 녹아든 고정 표현이라 소량 데이터에서도 강하다. GNN은 분자 표현을 처음부터 학습해야 하므로 68개 약물로는 일반화된 표현을 학습할 수 없다.
+
+**2단계 학습(GNN warmup)**도 시도했으나 근본적인 데이터 부족 문제를 해결하지 못함.
+
+**결론: GNN from-scratch → Pretrained drug encoder로 전략 전환**
+
+ChemBERTa (PubChem 수백만 분자로 사전학습된 SMILES transformer)를 사용하면:
+- 데이터 부족 문제 해결 (사전학습 시 충분한 분자 다양성 확보)
+- SaProt과 동일한 패러다임 (frozen pretrained encoder + DTI 헤드만 학습)
+- DAVIS 68개, KIBA 2068개 모두에서 유효
 
 **관련 논문 비교:**
 
@@ -219,10 +236,15 @@ regressor: Linear(512→256) → GELU → Dropout(0.1) → Linear(256→64) → 
 |------|----------------|--------------|---------|------|
 | DeepPurpose MPNN_CNN | CNN (학습) | MPNN (학습) | ~0.89 | 2020, end-to-end |
 | ConPLex | ESM-2 (frozen) | GNN (학습) | ~0.90 | 2023 PNAS |
-| **본 연구 (목표)** | **SaProt+3Di (frozen)** | **GNN (학습)** | **≥ 0.85** | **4GB VRAM** |
+| **본 연구 (목표)** | **SaProt+3Di (frozen)** | **ChemBERTa (frozen/fine-tune)** | **≥ 0.85** | **4GB VRAM** |
 
-ConPLex(2023)와 동일한 설계(frozen PLM + GNN)이나, protein encoder를 ESM-2 대신 3Di 구조 토큰이 내장된 SaProt으로 교체한 것이 핵심 차별점이다.
+### Phase 1e — Pretrained Drug Encoder (⏳ 예정)
+
+ChemBERTa (deepforestsci/chemberta3) 활용:
+- PubChem 사전학습 → 일반 분자 표현 확보 (데이터 부족 문제 해결)
+- DAVIS/KIBA는 DTI fine-tuning 데이터 — pretraining에 없는 게 정상 (data leakage 방지)
+- frozen or lightweight fine-tuning으로 VRAM 4GB 내 운영 가능 여부 확인 필요
 
 ### Phase 3 — Agent 오케스트레이션 (⏳ 예정)
 
-Tool 1 (DTI): GNN + SaProt-650M FP16 + 3Di 모델로 교체 후 smolagents 통합
+Tool 1 (DTI): 최종 DTI 모델(SaProt+3Di + ChemBERTa)로 교체 후 smolagents 통합

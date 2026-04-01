@@ -63,6 +63,8 @@ parser.add_argument("--use_3di",      action="store_true",
                     help="Use FoldSeek 3Di structural tokens instead of '#' placeholder")
 parser.add_argument("--drug_encoder", default="morgan", choices=["morgan", "gnn"],
                     help="Drug encoder: morgan=Morgan FP (fixed), gnn=MPNN (trainable)")
+parser.add_argument("--gnn_warmup_epochs", type=int, default=10,
+                    help="GNN 2단계 학습: 이 에포크까지 GNN 동결 후 해동 (default=10)")
 args = parser.parse_args()
 
 # 자동 기본값
@@ -288,14 +290,28 @@ if args.drug_encoder == "morgan":
     DRUG_DIM  = 2048
     gnn_encoder = None
 
-else:  # gnn
-    print("[4] 약물 분자 그래프 변환 (GNN 입력용)...")
+else:  # gnn  →  Morgan FP + GNN concat
+    print("[4] 약물 인코딩 (Morgan FP 2048-dim + GNN 256-dim concat)...")
     from tools.gnn_drug_encoder import (
         smiles_to_graph, collate_graphs, GNNDrugEncoder, GNN_OUT_DIM,
     )
+
+    def smiles_to_fp(smiles):
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None: return None
+        fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=2048)
+        return np.array(list(fp), dtype=np.float32)
+
+    # Morgan FP (고정)
+    drug_fps  = np.zeros((len(unique_drugs), 2048), dtype=np.float32)
+    for i, smi in enumerate(unique_drugs):
+        fp = smiles_to_fp(smi)
+        if fp is not None: drug_fps[i] = fp
+    drug_fps = torch.tensor(drug_fps)
+
+    # GNN 그래프
     drug_graphs = []
     n_invalid   = 0
-    _fallback_fp = torch.zeros(GNN_OUT_DIM)  # invalid SMILES fallback
     for smi in unique_drugs:
         g = smiles_to_graph(smi)
         if g is None:
@@ -303,14 +319,14 @@ else:  # gnn
             n_invalid += 1
         else:
             drug_graphs.append(g)
-    # invalid → 가장 작은 유효 그래프로 대체
     _valid_g = next(g for g in drug_graphs if g is not None)
     drug_graphs = [g if g is not None else _valid_g for g in drug_graphs]
-    print(f"    ✅ {len(unique_drugs)}개 약물 | 그래프 변환 실패: {n_invalid}개\n")
-    DRUG_DIM    = GNN_OUT_DIM  # 256
+
+    print(f"    ✅ {len(unique_drugs)}개 약물 | 그래프 변환 실패: {n_invalid}개")
+    DRUG_DIM    = 2048 + GNN_OUT_DIM   # 2048 + 256 = 2304
     gnn_encoder = GNNDrugEncoder().to(DEVICE)
     n_gnn = sum(p.numel() for p in gnn_encoder.parameters()) / 1e6
-    print(f"    GNNDrugEncoder: {n_gnn:.2f}M params\n")
+    print(f"    GNNDrugEncoder: {n_gnn:.2f}M params  |  drug_dim={DRUG_DIM} (Morgan+GNN)\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # [5] 데이터셋 & 데이터로더
@@ -328,15 +344,16 @@ class FrozenDataset(Dataset):
                 torch.tensor(self.labels[i], dtype=torch.float32))
 
 class FrozenDatasetGNN(Dataset):
-    """GNN 모드: (prot_emb, graph_tuple, label)"""
+    """GNN 모드: (prot_emb, (morgan_fp, graph_tuple), label)"""
     def __init__(self, indices):
         self.prot_idx = tgt_indices[indices]
         self.drug_idx = drug_indices[indices]
         self.labels   = y[indices]
     def __len__(self): return len(self.labels)
     def __getitem__(self, i):
+        didx = self.drug_idx[i]
         return (prot_embs[self.prot_idx[i]],
-                drug_graphs[self.drug_idx[i]],  # (nf, adj, bf) tuple
+                (drug_fps[didx], drug_graphs[didx]),  # (morgan_fp, graph_tuple)
                 torch.tensor(self.labels[i], dtype=torch.float32))
 
 class LoRADataset(Dataset):
@@ -359,9 +376,12 @@ def lora_collate(batch):
     return ids_pad, masks_pad, torch.stack(drug_fps_b), torch.tensor(labels)
 
 def gnn_collate(batch):
-    prots, graphs, labels = zip(*batch)
+    prots, drug_tuples, labels = zip(*batch)
+    fps, graphs = zip(*drug_tuples)
     nf_pad, adj_pad, bf_pad, mask = collate_graphs(list(graphs))
-    return torch.stack(prots), (nf_pad, adj_pad, bf_pad, mask), torch.stack(labels)
+    return (torch.stack(prots),
+            (torch.stack(fps), (nf_pad, adj_pad, bf_pad, mask)),
+            torch.stack(labels))
 
 if args.lora:
     DS = LoRADataset
@@ -464,21 +484,38 @@ print("    " + "-" * 58, flush=True)
 t_start = time.time()
 
 def _get_drug_emb(batch_drug):
-    """GNN 모드: graph tuple → drug embedding. Morgan 모드: 그대로 반환."""
+    """GNN 모드: Morgan FP + GNN concat → drug embedding. Morgan 모드: 그대로 반환."""
     if args.drug_encoder == "gnn":
-        nf, adj, bf, mask = batch_drug
+        morgan_fp, graph_tuple = batch_drug
+        morgan_fp = morgan_fp.to(DEVICE)
+        nf, adj, bf, mask = graph_tuple
         nf   = nf.to(DEVICE)
         adj  = adj.to(DEVICE)
         bf   = bf.to(DEVICE)
         mask = mask.to(DEVICE)
-        return gnn_encoder(nf, adj, bf, mask)
+        gnn_emb = gnn_encoder(nf, adj, bf, mask)       # [B, 256]
+        return torch.cat([morgan_fp, gnn_emb], dim=-1)  # [B, 2304]
     return batch_drug.to(DEVICE)
 
 for epoch in range(1, args.epochs + 1):
+    # ── GNN 2단계 학습: warmup_epochs까지 GNN 동결 ──────────────────────────
+    if args.drug_encoder == "gnn":
+        if epoch <= args.gnn_warmup_epochs:
+            gnn_encoder.eval()
+            for p in gnn_encoder.parameters():
+                p.requires_grad_(False)
+            if epoch == 1:
+                print(f"    [2단계 학습] Stage 1: epoch {args.gnn_warmup_epochs}까지 GNN 동결 → Morgan FP로 Head 수렴", flush=True)
+        elif epoch == args.gnn_warmup_epochs + 1:
+            gnn_encoder.train()
+            for p in gnn_encoder.parameters():
+                p.requires_grad_(True)
+            print(f"\n    [2단계 학습] Stage 2: GNN 해동 → Morgan FP + GNN 함께 학습\n", flush=True)
+
     # ── train ──────────────────────────────────────────────────────────────
     head.train()
-    if args.lora:                   saprot.train()
-    if args.drug_encoder == "gnn":  gnn_encoder.train()
+    if args.lora:                                                   saprot.train()
+    if args.drug_encoder == "gnn" and epoch > args.gnn_warmup_epochs: gnn_encoder.train()
     train_loss = 0.0
 
     for batch in train_loader:
@@ -499,7 +536,8 @@ for epoch in range(1, args.epochs + 1):
         loss.backward()
         clip_params = list(head.parameters())
         if args.lora:                   clip_params += list(saprot.parameters())
-        if args.drug_encoder == "gnn":  clip_params += list(gnn_encoder.parameters())
+        if args.drug_encoder == "gnn" and epoch > args.gnn_warmup_epochs:
+            clip_params += list(gnn_encoder.parameters())
         torch.nn.utils.clip_grad_norm_(clip_params, 1.0)
         optimizer.step()
         train_loss += loss.item() * len(label)
@@ -635,7 +673,8 @@ with torch.no_grad():
         _prot_s, _drug_s_raw, _ = _b
         _prot_s = _prot_s[:1].to(DEVICE)
         if args.drug_encoder == "gnn":
-            _drug_s = _get_drug_emb(tuple(t[:1] for t in _drug_s_raw))
+            _fp_s, _graph_s = _drug_s_raw
+            _drug_s = _get_drug_emb((_fp_s[:1], tuple(t[:1] for t in _graph_s)))
         else:
             _drug_s = _drug_s_raw[:1].to(DEVICE)
     head(_prot_s, _drug_s)
@@ -718,7 +757,7 @@ _report = f"""# 실험 보고서 — {run_name}
 |---|---|
 | 데이터셋 | {args.dataset.upper()} |
 | Protein Encoder | SaProt-{args.encoder} ({args.quant if args.quant != 'none' else 'FP16'}) |
-| Drug Encoder | {'GNN/MPNN (4-layer, 256-dim)' if args.drug_encoder == 'gnn' else 'Morgan FP (radius=2, 2048-bit)'} |
+| Drug Encoder | {'Morgan FP (2048-bit) + GNN/MPNN (256-dim) concat → 2304-dim' if args.drug_encoder == 'gnn' else 'Morgan FP (radius=2, 2048-bit)'} |
 | FoldSeek 3Di | {'✅ 사용' if args.use_3di else '❌ Placeholder'} |
 | LoRA | {'✅ rank=' + str(args.lora_r) if args.lora else '❌ Frozen'} |
 | Split | Random 70 / 10 / 20 |

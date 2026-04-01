@@ -46,16 +46,17 @@ Instead of requiring expert knowledge (UniProt IDs, SMILES strings, database que
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| Phase 1 | **DTI Model Development** | 1a–1c ✅ / 1d 🔄 |
+| Phase 1 | **DTI Model Development** | 1a–1d ✅ / 1e 🔄 |
 | ↳ 1a | DAVIS baseline benchmarking (4 model variants) | ✅ Complete |
 | ↳ 1b | KIBA cross-dataset generalization validation | ✅ Complete |
 | ↳ 1c | FoldSeek 3Di structural token integration | ✅ Complete |
-| ↳ 1d | GNN drug encoder + cold-split evaluation | 🔄 Next |
+| ↳ 1d | GNN drug encoder — from-scratch 실패 (DAVIS 68 drugs 부족) | ✅ Complete (failed) |
+| ↳ 1e | Pretrained drug encoder (ChemBERTa) | 🔄 Next |
 | Phase 2 | **Agent Tools** (Tool 1–5 implementation) | ✅ Complete |
 | Phase 3 | **Agent Orchestration** — smolagents ReAct | ⏳ Planned |
 | Phase 4 | **End-to-End Demo** | ⏳ Planned |
 
-**Best DTI model:** SaProt-650M FP16 + 3Di — DAVIS r=0.8082, KIBA r=0.8032
+**Best DTI model:** SaProt-650M FP16 + 3Di + Morgan FP — DAVIS r=0.8082, KIBA r=0.8032
 (see [Training Report](docs/PHASE1_TRAINING_EXPERIMENTS.md))
 
 ---
@@ -203,8 +204,8 @@ This system is optimized for **known drugs interacting with human protein target
 **[Protein encoder] SaProt is frozen — no DTI-specific adaptation**
 SaProt-650M full fine-tuning requires >16GB VRAM (infeasible). LoRA was attempted but abandoned (2.5h/epoch, no Tensor Cores on GTX 1650 SUPER). SaProt is therefore used as a general protein encoder — its 3Di-aware representations are strong, but not tuned for DTI specifically.
 
-**[Drug encoder] Morgan FP — primary performance bottleneck**
-Morgan Fingerprint is a deterministic bit vector with zero learnable parameters (`AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=2048)`). It encodes local atomic neighbourhoods up to radius 2 but loses global molecular topology. SOTA DTI methods (MPNN_CNN r ≈ 0.89) use GNN drug encoders that learn directly from molecular graphs. The r=0.81 vs 0.89 gap is primarily attributable to this drug encoder gap. **Phase 1d:** replace with AttentiveFP or MPNN.
+**[Drug encoder] GNN from-scratch 실패 → ChemBERTa로 전략 전환**
+GNN drug encoder(MPNN 4-layer, from-scratch)를 Morgan FP와 concat하여 실험했으나 DAVIS r=0.58, KIBA r=0.72로 Morgan FP 단독(r=0.81)보다 크게 하락. 원인: DAVIS 고유 약물 68개로 2M 파라미터 GNN 학습 불가. **Phase 1e:** PubChem 사전학습 ChemBERTa(frozen)로 교체. SaProt과 동일 패러다임(pretrained frozen encoder + DTI 헤드만 학습).
 
 **[Evaluation] Random split may overestimate generalization**
 Current train/val/test split is random 70/10/20. Because DAVIS has only 68 unique drugs and 442 unique proteins, the same drug–protein entities appear in both train and test sets. This risks overestimating performance on truly unseen molecules. Cold-drug split (test drugs never seen during training) and cold-target split (test proteins never seen) are planned for Phase 4 to establish more realistic generalization bounds.
