@@ -71,8 +71,10 @@ class ChemBERTaDrugEncoder:
 
             with torch.no_grad():
                 outputs = self.model(**inputs)
-                # pooler_output: [B, 768]
-                emb = outputs.pooler_output
+                # mean pooling over all token embeddings (attention_mask 기준)
+                hidden = outputs.last_hidden_state          # [B, L, 768]
+                mask   = inputs["attention_mask"].unsqueeze(-1).float()  # [B, L, 1]
+                emb    = (hidden * mask).sum(1) / mask.sum(1).clamp(min=1)  # [B, 768]
 
             all_embs.append(emb.cpu())
 
