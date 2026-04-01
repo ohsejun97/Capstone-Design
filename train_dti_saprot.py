@@ -61,8 +61,8 @@ parser.add_argument("--patience",   type=int,   default=10)
 parser.add_argument("--seed",       type=int,   default=42)
 parser.add_argument("--use_3di",      action="store_true",
                     help="Use FoldSeek 3Di structural tokens instead of '#' placeholder")
-parser.add_argument("--drug_encoder", default="morgan", choices=["morgan", "gnn"],
-                    help="Drug encoder: morgan=Morgan FP (fixed), gnn=MPNN (trainable)")
+parser.add_argument("--drug_encoder", default="morgan", choices=["morgan", "gnn", "chemberta"],
+                    help="Drug encoder: morgan=Morgan FP (fixed), gnn=MPNN+MorganFP (trainable), chemberta=ChemBERTa (frozen)")
 parser.add_argument("--gnn_warmup_epochs", type=int, default=10,
                     help="GNN 2단계 학습: 이 에포크까지 GNN 동결 후 해동 (default=10)")
 args = parser.parse_args()
@@ -74,7 +74,7 @@ if args.batch_size == 0:
     elif args.drug_encoder == "gnn":
         args.batch_size = 32   # GNN: dense adj matrix → VRAM 절약
     else:
-        args.batch_size = 128
+        args.batch_size = 128  # morgan / chemberta (캐시 기반, VRAM 여유)
 if args.lr == 0.0:
     args.lr = 5e-5 if args.lora else 1e-3
 
@@ -92,7 +92,8 @@ if args.quant != "none":        run_name += f"-{args.quant}"
 if args.lora:                   run_name += "-lora"
 run_name += f"-{args.dataset}"
 if args.use_3di:                run_name += "-3di"
-if args.drug_encoder == "gnn":  run_name += "-gnn"
+if args.drug_encoder == "gnn":        run_name += "-gnn"
+if args.drug_encoder == "chemberta":  run_name += "-chemberta"
 
 print("=" * 60)
 print(f"  DTI Training — {run_name}")
@@ -288,6 +289,26 @@ if args.drug_encoder == "morgan":
     drug_fps = torch.tensor(drug_fps)
     print(f"    ✅ {len(unique_drugs)}개 약물 | 유효하지 않은 SMILES: {n_invalid}개\n")
     DRUG_DIM  = 2048
+    gnn_encoder = None
+
+elif args.drug_encoder == "chemberta":
+    from tools.chemberta_drug_encoder import ChemBERTaDrugEncoder, CHEMBERTA_DIM
+
+    _cache_path = Path(f"./cache/drug_embs_{args.dataset}_chemberta.pt")
+    if _cache_path.exists():
+        print(f"[4] ChemBERTa 약물 임베딩 캐시 로드: {_cache_path}", flush=True)
+        drug_fps = torch.load(_cache_path, weights_only=True)
+    else:
+        print(f"[4] ChemBERTa 약물 임베딩 계산 ({len(unique_drugs)}개 약물)...", flush=True)
+        _cb_encoder = ChemBERTaDrugEncoder(device=str(DEVICE))
+        drug_fps = _cb_encoder.encode(list(unique_drugs), batch_size=64)
+        torch.save(drug_fps, _cache_path)
+        del _cb_encoder
+        if torch.cuda.is_available(): torch.cuda.empty_cache()
+        print(f"    ✅ 캐시 저장: {_cache_path}", flush=True)
+
+    print(f"    ✅ {len(unique_drugs)}개 약물 | ChemBERTa 임베딩: {drug_fps.shape}\n", flush=True)
+    DRUG_DIM    = CHEMBERTA_DIM  # 768
     gnn_encoder = None
 
 else:  # gnn  →  Morgan FP + GNN concat
@@ -757,7 +778,7 @@ _report = f"""# 실험 보고서 — {run_name}
 |---|---|
 | 데이터셋 | {args.dataset.upper()} |
 | Protein Encoder | SaProt-{args.encoder} ({args.quant if args.quant != 'none' else 'FP16'}) |
-| Drug Encoder | {'Morgan FP (2048-bit) + GNN/MPNN (256-dim) concat → 2304-dim' if args.drug_encoder == 'gnn' else 'Morgan FP (radius=2, 2048-bit)'} |
+| Drug Encoder | {'Morgan FP (2048-bit) + GNN/MPNN (256-dim) concat → 2304-dim' if args.drug_encoder == 'gnn' else ('ChemBERTa (seyonec/ChemBERTa-zinc-base-v1, frozen, 768-dim)' if args.drug_encoder == 'chemberta' else 'Morgan FP (radius=2, 2048-bit)')} |
 | FoldSeek 3Di | {'✅ 사용' if args.use_3di else '❌ Placeholder'} |
 | LoRA | {'✅ rank=' + str(args.lora_r) if args.lora else '❌ Frozen'} |
 | Split | Random 70 / 10 / 20 |
