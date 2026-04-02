@@ -6,7 +6,8 @@ preprocess_bindingdb.py
 사용법:
   python preprocess_bindingdb.py --input ./BindingDB_All.tsv --output ./bindingdb_kd.csv
 
-출력 컬럼: smiles, sequence, pkd
+출력 컬럼: smiles, sequence, pkd, uniprot_id
+  - uniprot_id: 3Di 캐시 빌드 시 BLAST 스킵용 (없으면 빈 문자열)
 """
 
 import argparse
@@ -56,18 +57,28 @@ df = df[df["Kd (nM)"] <= 10_000_000.0]
 pkd = -np.log10(df["Kd (nM)"].values * 1e-9)
 
 out = pd.DataFrame({
-    "smiles":   df["Ligand SMILES"].values,
-    "sequence": df["BindingDB Target Chain Sequence 1"].values,
-    "pkd":      pkd,
+    "smiles":     df["Ligand SMILES"].values,
+    "sequence":   df["BindingDB Target Chain Sequence 1"].values,
+    "pkd":        pkd,
+    "uniprot_id": df["UniProt (SwissProt) Primary ID of Target Chain 1"].values,
 })
 
 # inf / nan 최종 제거
 out = out[np.isfinite(out["pkd"])]
 
-# 중복 (smiles, sequence) 쌍 → pKd 평균으로 합치기
+# 중복 (smiles, sequence) 쌍 → pKd 평균, uniprot_id는 첫 번째 non-null 값
 before = len(out)
-out = out.groupby(["smiles", "sequence"], as_index=False)["pkd"].mean()
+out = out.groupby(["smiles", "sequence"], as_index=False).agg(
+    pkd=("pkd", "mean"),
+    uniprot_id=("uniprot_id", "first"),
+)
+# uniprot_id null → 빈 문자열 (BLAST fallback 신호)
+out["uniprot_id"] = out["uniprot_id"].fillna("")
+
 print(f"    Dedup: {before:,} → {len(out):,} (중복 제거 {before - len(out):,}행)")
+
+n_with_uid = (out["uniprot_id"] != "").sum()
+print(f"    UniProt ID 보유: {n_with_uid:,} / {out['sequence'].nunique():,} 고유 타겟")
 
 print(f"[3] Final pairs: {len(out):,}")
 print(f"    Unique drugs:   {out['smiles'].nunique():,}")

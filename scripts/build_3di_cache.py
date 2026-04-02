@@ -137,7 +137,7 @@ def blast_sequence_to_uniprot(seq: str, retries: int = 3) -> str | None:
     return None
 
 
-def process_protein(seq: str, idx: int, total: int) -> dict:
+def process_protein(seq: str, idx: int, total: int, uniprot_id: str = None) -> dict:
     """
     단일 단백질 처리: BLAST → AlphaFold → FoldSeek.
 
@@ -154,9 +154,12 @@ def process_protein(seq: str, idx: int, total: int) -> dict:
     h = seq_hash(seq)
     prefix = f"  [{idx}/{total}]"
 
-    # ── 1. UniProt ID 조회 ─────────────────────────────────────────────────
-    print(f"{prefix} BLAST ({len(seq)} aa)...", flush=True)
-    uniprot_id = blast_sequence_to_uniprot(seq)
+    # ── 1. UniProt ID 조회 (직접 제공된 경우 BLAST 스킵) ──────────────────
+    if uniprot_id:
+        print(f"{prefix} UniProt ID 직접 사용: {uniprot_id} (BLAST 스킵)", flush=True)
+    else:
+        print(f"{prefix} BLAST ({len(seq)} aa)...", flush=True)
+        uniprot_id = blast_sequence_to_uniprot(seq)
 
     if uniprot_id is None:
         print(f"{prefix} ❌ UniProt ID 조회 실패 → '#' 플레이스홀더 사용")
@@ -218,17 +221,19 @@ def main():
         X_drugs, X_targets, _ = dp_dataset.load_process_KIBA(
             path="./data", binary=False, threshold=9
         )
-    elif args.dataset == "bindingdb":
+    elif args.dataset in ("bindingdb", "davis+bindingdb"):
         import pandas as pd
         _bdb = pd.read_csv("./data/BindingDB/bindingdb_kd.csv")
-        X_targets = _bdb["sequence"].tolist()
-    elif args.dataset == "davis+bindingdb":
-        import pandas as pd
-        _, X_t_davis, _ = dp_dataset.load_process_DAVIS(
-            path="./data", binary=False, convert_to_log=True
-        )
-        _bdb = pd.read_csv("./data/BindingDB/bindingdb_kd.csv")
-        X_targets = X_t_davis + _bdb["sequence"].tolist()
+        # sequence → uniprot_id 매핑 (BLAST 스킵용)
+        _uid_map = dict(zip(_bdb["sequence"], _bdb.get("uniprot_id", "")))
+        _uid_map = {k: v for k, v in _uid_map.items() if isinstance(v, str) and v.strip()}
+        if args.dataset == "bindingdb":
+            X_targets = _bdb["sequence"].tolist()
+        else:
+            _, X_t_davis, _ = dp_dataset.load_process_DAVIS(
+                path="./data", binary=False, convert_to_log=True
+            )
+            X_targets = X_t_davis + _bdb["sequence"].tolist()
 
     unique_seqs = list(dict.fromkeys(X_targets))
     print(f"    고유 단백질: {len(unique_seqs)}개\n")
@@ -247,6 +252,9 @@ def main():
     total = len(unique_seqs)
     n_ok = n_fail = 0
 
+    # BindingDB: sequence → uniprot_id 매핑 (없으면 빈 dict)
+    uid_map = _uid_map if args.dataset in ("bindingdb", "davis+bindingdb") else {}
+
     for i, seq in enumerate(unique_seqs, 1):
         h = seq_hash(seq)
 
@@ -255,7 +263,7 @@ def main():
             n_ok += 1
             continue
 
-        result = process_protein(seq, i, total)
+        result = process_protein(seq, i, total, uniprot_id=uid_map.get(seq))
         cache[h] = result
 
         if result["status"] == "ok":
