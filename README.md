@@ -52,7 +52,7 @@ Instead of requiring expert knowledge (UniProt IDs, SMILES strings, database que
 | ↳ 1c | FoldSeek 3Di structural token integration | ✅ Complete |
 | ↳ 1d | GNN drug encoder — from-scratch 실패 (DAVIS 68 drugs 부족) | ✅ Complete (failed) |
 | ↳ 1e | ChemBERTa frozen — Morgan FP 미달 (DAVIS -0.019, KIBA -0.043) | ✅ Complete (failed) |
-| ↳ 1f | **BindingDB 전처리 완료** (115K쌍, 32K약물) → GNN/ChemBERTa 재훈련 예정 | 🔄 In Progress |
+| ↳ 1f | **BindingDB 전처리 완료** (80K쌍, 32K약물, dedup) → GNN/ChemBERTa 재훈련 예정 | 🔄 In Progress |
 | Phase 2 | **Agent Tools** (Tool 1–5 implementation) | ✅ Complete |
 | Phase 3 | **Agent Orchestration** — smolagents ReAct | ⏳ Next |
 | Phase 4 | **End-to-End Demo** | ⏳ Planned |
