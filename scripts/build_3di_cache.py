@@ -219,19 +219,16 @@ def main():
             path="./data", binary=False, threshold=9
         )
     elif args.dataset == "bindingdb":
-        X_drugs, X_targets, _ = dp_dataset.process_BindingDB(
-            path="./data/BindingDB", df=None, y="Kd",
-            binary=False, convert_to_log=True, threshold=30,
-        )
+        import pandas as pd
+        _bdb = pd.read_csv("./data/BindingDB/bindingdb_kd.csv")
+        X_targets = _bdb["sequence"].tolist()
     elif args.dataset == "davis+bindingdb":
+        import pandas as pd
         _, X_t_davis, _ = dp_dataset.load_process_DAVIS(
             path="./data", binary=False, convert_to_log=True
         )
-        _, X_t_bdb, _ = dp_dataset.process_BindingDB(
-            path="./data/BindingDB", df=None, y="Kd",
-            binary=False, convert_to_log=True, threshold=30,
-        )
-        X_targets = X_t_davis + X_t_bdb
+        _bdb = pd.read_csv("./data/BindingDB/bindingdb_kd.csv")
+        X_targets = X_t_davis + _bdb["sequence"].tolist()
 
     unique_seqs = list(dict.fromkeys(X_targets))
     print(f"    고유 단백질: {len(unique_seqs)}개\n")
