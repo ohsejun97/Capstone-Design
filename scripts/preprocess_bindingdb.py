@@ -4,9 +4,7 @@ preprocess_bindingdb.py
 서버에서 실행: BindingDB_All.tsv (8GB) → bindingdb_kd.csv (작은 CSV)
 
 사용법:
-  python scripts/preprocess_bindingdb.py \
-      --input  /path/to/BindingDB_All.tsv \
-      --output /path/to/bindingdb_kd.csv
+  python preprocess_bindingdb.py --input ./BindingDB_All.tsv --output ./bindingdb_kd.csv
 
 출력 컬럼: smiles, sequence, pkd
 """
@@ -40,6 +38,9 @@ df = df[df["PubChem CID"].notnull() | df["UniProt (SwissProt) Primary ID of Targ
 # 타깃 서열 null 제거
 df = df[df["BindingDB Target Chain Sequence 1"].notnull()]
 
+# 슬라이스 복사 — 이후 컬럼 수정 시 SettingWithCopyWarning 방지
+df = df.copy()
+
 print(f"[2] After filtering: {len(df):,} rows")
 
 # > < 기호 제거 후 float 변환
@@ -47,7 +48,8 @@ df["Kd (nM)"] = df["Kd (nM)"].astype(str).str.replace(">", "").str.replace("<", 
 df["Kd (nM)"] = pd.to_numeric(df["Kd (nM)"], errors="coerce")
 df = df[df["Kd (nM)"].notnull()]
 
-# 이상값 제거 (DeepPurpose 기준: <= 10,000,000 nM)
+# 이상값 제거: 0 이하(log 불가) 및 10,000,000 nM 초과
+df = df[df["Kd (nM)"] > 0]
 df = df[df["Kd (nM)"] <= 10_000_000.0]
 
 # Kd(nM) → pKd = -log10(Kd * 1e-9)
@@ -58,6 +60,9 @@ out = pd.DataFrame({
     "sequence": df["BindingDB Target Chain Sequence 1"].values,
     "pkd":      pkd,
 })
+
+# inf / nan 최종 제거
+out = out[np.isfinite(out["pkd"])]
 
 print(f"[3] Final pairs: {len(out):,}")
 print(f"    Unique drugs:   {out['smiles'].nunique():,}")
