@@ -64,6 +64,11 @@ out = pd.DataFrame({
 # inf / nan 최종 제거
 out = out[np.isfinite(out["pkd"])]
 
+# 중복 (smiles, sequence) 쌍 → pKd 평균으로 합치기
+before = len(out)
+out = out.groupby(["smiles", "sequence"], as_index=False)["pkd"].mean()
+print(f"    Dedup: {before:,} → {len(out):,} (중복 제거 {before - len(out):,}행)")
+
 print(f"[3] Final pairs: {len(out):,}")
 print(f"    Unique drugs:   {out['smiles'].nunique():,}")
 print(f"    Unique targets: {out['sequence'].nunique():,}")

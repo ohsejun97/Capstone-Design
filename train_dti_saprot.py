@@ -118,20 +118,20 @@ elif args.dataset == "kiba":
         path="./data", binary=False, threshold=9
     )
 elif args.dataset == "bindingdb":
-    print("[1] Loading BindingDB (Kd → pKd)...")
-    X_drugs, X_targets, y = dp_dataset.process_BindingDB(
-        path="./data/BindingDB/BindingDB_All.tsv", df=None, y="Kd",
-        binary=False, convert_to_log=True, threshold=30,
-    )
+    print("[1] Loading BindingDB from preprocessed CSV...")
+    _bdb = pd.read_csv("./data/BindingDB/bindingdb_kd.csv")
+    X_drugs   = _bdb["smiles"].tolist()
+    X_targets = _bdb["sequence"].tolist()
+    y         = _bdb["pkd"].tolist()
 elif args.dataset == "davis+bindingdb":
     print("[1] Loading DAVIS + BindingDB (combined, pKd)...")
     X_d_davis, X_t_davis, y_davis = dp_dataset.load_process_DAVIS(
         path="./data", binary=False, convert_to_log=True
     )
-    X_d_bdb, X_t_bdb, y_bdb = dp_dataset.process_BindingDB(
-        path="./data/BindingDB/BindingDB_All.tsv", df=None, y="Kd",
-        binary=False, convert_to_log=True, threshold=30,
-    )
+    _bdb = pd.read_csv("./data/BindingDB/bindingdb_kd.csv")
+    X_d_bdb   = _bdb["smiles"].tolist()
+    X_t_bdb   = _bdb["sequence"].tolist()
+    y_bdb     = _bdb["pkd"].tolist()
     X_drugs   = X_d_davis + X_d_bdb
     X_targets = X_t_davis + X_t_bdb
     y         = y_davis   + y_bdb
