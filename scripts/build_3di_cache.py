@@ -225,7 +225,7 @@ def main():
         import pandas as pd
         _bdb = pd.read_csv("./data/BindingDB/bindingdb_kd.csv")
         # sequence → uniprot_id 매핑 (BLAST 스킵용)
-        _uid_map = dict(zip(_bdb["sequence"], _bdb.get("uniprot_id", "")))
+        _uid_map = dict(zip(_bdb["sequence"], _bdb["uniprot_id"]))
         _uid_map = {k: v for k, v in _uid_map.items() if isinstance(v, str) and v.strip()}
         if args.dataset == "bindingdb":
             X_targets = _bdb["sequence"].tolist()
