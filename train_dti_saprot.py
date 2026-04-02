@@ -45,8 +45,9 @@ except ImportError:
 # 인자 파싱
 # ══════════════════════════════════════════════════════════════════════════════
 parser = argparse.ArgumentParser(description="SaProt DTI Trainer")
-parser.add_argument("--dataset",    default="davis", choices=["davis", "kiba"],
-                    help="Training dataset (default: davis)")
+parser.add_argument("--dataset",    default="davis",
+                    choices=["davis", "kiba", "bindingdb", "davis+bindingdb"],
+                    help="Training dataset: davis, kiba, bindingdb, davis+bindingdb")
 parser.add_argument("--encoder",    default="650M", choices=["650M", "35M"])
 parser.add_argument("--quant",      default="none", choices=["none", "8bit", "4bit"])
 parser.add_argument("--lora",       action="store_true")
@@ -111,11 +112,30 @@ if args.dataset == "davis":
     X_drugs, X_targets, y = dp_dataset.load_process_DAVIS(
         path="./data", binary=False, convert_to_log=True
     )
-else:
+elif args.dataset == "kiba":
     print("[1] Loading KIBA (KIBA score, regression)...")
     X_drugs, X_targets, y = dp_dataset.load_process_KIBA(
         path="./data", binary=False, threshold=9
     )
+elif args.dataset == "bindingdb":
+    print("[1] Loading BindingDB (Kd → pKd)...")
+    X_drugs, X_targets, y = dp_dataset.process_BindingDB(
+        path="./data/BindingDB/BindingDB_All.tsv", df=None, y="Kd",
+        binary=False, convert_to_log=True, threshold=30,
+    )
+elif args.dataset == "davis+bindingdb":
+    print("[1] Loading DAVIS + BindingDB (combined, pKd)...")
+    X_d_davis, X_t_davis, y_davis = dp_dataset.load_process_DAVIS(
+        path="./data", binary=False, convert_to_log=True
+    )
+    X_d_bdb, X_t_bdb, y_bdb = dp_dataset.process_BindingDB(
+        path="./data/BindingDB/BindingDB_All.tsv", df=None, y="Kd",
+        binary=False, convert_to_log=True, threshold=30,
+    )
+    X_drugs   = X_d_davis + X_d_bdb
+    X_targets = X_t_davis + X_t_bdb
+    y         = y_davis   + y_bdb
+    print(f"    DAVIS: {len(y_davis):,} pairs  +  BindingDB: {len(y_bdb):,} pairs")
 
 y = np.array(y, dtype=np.float32)
 print(f"    Total: {len(y):,} pairs  |  target: {y.min():.2f} ~ {y.max():.2f}")

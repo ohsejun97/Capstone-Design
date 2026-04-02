@@ -1,0 +1,68 @@
+"""
+preprocess_bindingdb.py
+=======================
+서버에서 실행: BindingDB_All.tsv (8GB) → bindingdb_kd.csv (작은 CSV)
+
+사용법:
+  python scripts/preprocess_bindingdb.py \
+      --input  /path/to/BindingDB_All.tsv \
+      --output /path/to/bindingdb_kd.csv
+
+출력 컬럼: smiles, sequence, pkd
+"""
+
+import argparse
+import numpy as np
+import pandas as pd
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--input",  required=True, help="BindingDB_All.tsv 경로")
+parser.add_argument("--output", required=True, help="출력 CSV 경로")
+args = parser.parse_args()
+
+print(f"[1] Reading {args.input} ...")
+df = pd.read_csv(args.input, sep="\t", on_bad_lines="skip", low_memory=False)
+print(f"    Raw rows: {len(df):,}")
+
+# 단일 체인 단백질만
+df = df[df["Number of Protein Chains in Target (>1 implies a multichain complex)"] == 1.0]
+
+# SMILES / InChI null 제거
+df = df[df["Ligand SMILES"].notnull()]
+df = df[df["Ligand InChI"].notnull()]
+
+# Kd 컬럼 필터링
+df = df[df["Kd (nM)"].notnull()]
+
+# UniProt or PubChem ID 중 하나는 있어야
+df = df[df["PubChem CID"].notnull() | df["UniProt (SwissProt) Primary ID of Target Chain"].notnull()]
+
+# 타깃 서열 null 제거
+df = df[df["BindingDB Target Chain  Sequence"].notnull()]
+
+print(f"[2] After filtering: {len(df):,} rows")
+
+# > < 기호 제거 후 float 변환
+df["Kd (nM)"] = df["Kd (nM)"].astype(str).str.replace(">", "").str.replace("<", "").str.strip()
+df["Kd (nM)"] = pd.to_numeric(df["Kd (nM)"], errors="coerce")
+df = df[df["Kd (nM)"].notnull()]
+
+# 이상값 제거 (DeepPurpose 기준: <= 10,000,000 nM)
+df = df[df["Kd (nM)"] <= 10_000_000.0]
+
+# Kd(nM) → pKd = -log10(Kd * 1e-9)
+pkd = -np.log10(df["Kd (nM)"].values * 1e-9)
+
+out = pd.DataFrame({
+    "smiles":   df["Ligand SMILES"].values,
+    "sequence": df["BindingDB Target Chain  Sequence"].values,
+    "pkd":      pkd,
+})
+
+print(f"[3] Final pairs: {len(out):,}")
+print(f"    Unique drugs:   {out['smiles'].nunique():,}")
+print(f"    Unique targets: {out['sequence'].nunique():,}")
+print(f"    pKd range: {out['pkd'].min():.2f} ~ {out['pkd'].max():.2f}, mean={out['pkd'].mean():.2f}")
+
+out.to_csv(args.output, index=False)
+print(f"[4] Saved → {args.output}")

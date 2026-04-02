@@ -33,3 +33,5 @@ data/__MACOSX/
 
 # ── 데이터 (대용량) ───────────────────────────────────────────
 data/KIBA/
+data/BindingDB/*.tsv
+data/BindingDB/*.zip

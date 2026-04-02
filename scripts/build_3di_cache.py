@@ -32,7 +32,8 @@ from tools.foldseek_tool import extract_3di_tokens, check_foldseek
 
 # ── 인자 파싱 ──────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser(description="Build FoldSeek 3Di token cache")
-parser.add_argument("--dataset",  default="davis", choices=["davis", "kiba"])
+parser.add_argument("--dataset",  default="davis",
+                    choices=["davis", "kiba", "bindingdb", "davis+bindingdb"])
 parser.add_argument("--resume",   action="store_true",
                     help="Resume from existing cache (skip already-done entries)")
 parser.add_argument("--max_workers", type=int, default=1,
@@ -213,10 +214,24 @@ def main():
         X_drugs, X_targets, _ = dp_dataset.load_process_DAVIS(
             path="./data", binary=False, convert_to_log=True
         )
-    else:
+    elif args.dataset == "kiba":
         X_drugs, X_targets, _ = dp_dataset.load_process_KIBA(
             path="./data", binary=False, threshold=9
         )
+    elif args.dataset == "bindingdb":
+        X_drugs, X_targets, _ = dp_dataset.process_BindingDB(
+            path="./data/BindingDB", df=None, y="Kd",
+            binary=False, convert_to_log=True, threshold=30,
+        )
+    elif args.dataset == "davis+bindingdb":
+        _, X_t_davis, _ = dp_dataset.load_process_DAVIS(
+            path="./data", binary=False, convert_to_log=True
+        )
+        _, X_t_bdb, _ = dp_dataset.process_BindingDB(
+            path="./data/BindingDB", df=None, y="Kd",
+            binary=False, convert_to_log=True, threshold=30,
+        )
+        X_targets = X_t_davis + X_t_bdb
 
     unique_seqs = list(dict.fromkeys(X_targets))
     print(f"    고유 단백질: {len(unique_seqs)}개\n")

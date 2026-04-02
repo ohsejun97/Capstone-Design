@@ -46,17 +46,18 @@ Instead of requiring expert knowledge (UniProt IDs, SMILES strings, database que
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| Phase 1 | **DTI Model Development** | 1a–1e ✅ |
+| Phase 1 | **DTI Model Development** | 1a–1e ✅, 1f 🔄 |
 | ↳ 1a | DAVIS baseline benchmarking (4 model variants) | ✅ Complete |
 | ↳ 1b | KIBA cross-dataset generalization validation | ✅ Complete |
 | ↳ 1c | FoldSeek 3Di structural token integration | ✅ Complete |
 | ↳ 1d | GNN drug encoder — from-scratch 실패 (DAVIS 68 drugs 부족) | ✅ Complete (failed) |
 | ↳ 1e | ChemBERTa frozen — Morgan FP 미달 (DAVIS -0.019, KIBA -0.043) | ✅ Complete (failed) |
+| ↳ 1f | **BindingDB 데이터 확장 → GNN/ChemBERTa 재시도** | 🔄 In Progress |
 | Phase 2 | **Agent Tools** (Tool 1–5 implementation) | ✅ Complete |
-| Phase 3 | **Agent Orchestration** — smolagents ReAct | 🔄 Next |
+| Phase 3 | **Agent Orchestration** — smolagents ReAct | ⏳ Next |
 | Phase 4 | **End-to-End Demo** | ⏳ Planned |
 
-**Best DTI model:** SaProt-650M FP16 + 3Di + Morgan FP — DAVIS r=0.8082, KIBA r=0.8032
+**Best DTI model (현재):** SaProt-650M FP16 + 3Di + Morgan FP — DAVIS r=0.8082, KIBA r=0.8032
 (see [Training Report](docs/PHASE1_TRAINING_EXPERIMENTS.md))
 
 ---
@@ -204,8 +205,8 @@ This system is optimized for **known drugs interacting with human protein target
 **[Protein encoder] SaProt is frozen — no DTI-specific adaptation**
 SaProt-650M full fine-tuning requires >16GB VRAM (infeasible). LoRA was attempted but abandoned (2.5h/epoch, no Tensor Cores on GTX 1650 SUPER). SaProt is therefore used as a general protein encoder — its 3Di-aware representations are strong, but not tuned for DTI specifically.
 
-**[Drug encoder] GNN + ChemBERTa 모두 Morgan FP 미달 → Morgan FP로 확정**
-GNN from-scratch(DAVIS r=0.58)와 ChemBERTa frozen(DAVIS r=0.79)을 시도했으나 Morgan FP 단독(r=0.8082)에 미달. Morgan FP는 소량 drug set에서도 안정적인 결정론적 표현. Drug encoder는 Morgan FP(2048-bit, radius=2)로 확정.
+**[Drug encoder] GNN + ChemBERTa 모두 Morgan FP 미달 → BindingDB로 재시도 중 (Phase 1f)**
+GNN from-scratch(DAVIS r=0.58)와 ChemBERTa frozen(DAVIS r=0.79)을 시도했으나 Morgan FP 단독(r=0.8082)에 미달. 근본 원인: DAVIS 고유 약물 68개로는 GNN/ChemBERTa 학습 부족. BindingDB(수십만 쌍, 다양한 타겟)로 약물 다양성 확보 후 재시도 중.
 
 **[Evaluation] Random split may overestimate generalization**
 Current train/val/test split is random 70/10/20. Because DAVIS has only 68 unique drugs and 442 unique proteins, the same drug–protein entities appear in both train and test sets. This risks overestimating performance on truly unseen molecules. Cold-drug split (test drugs never seen during training) and cold-target split (test proteins never seen) are planned for Phase 4 to establish more realistic generalization bounds.
@@ -227,8 +228,9 @@ The LLM orchestrator must translate non-English drug names (e.g., "비아그라"
 | Phase 1c | FoldSeek 3Di token integration + re-evaluation | ✅ Complete |
 | Phase 1d | GNN drug encoder (from-scratch) — failed (68 drugs) | ✅ Complete |
 | Phase 1e | ChemBERTa frozen drug encoder — failed (Morgan FP superior) | ✅ Complete |
+| **Phase 1f** | **BindingDB 전처리 + GNN/ChemBERTa 재시도** | **🔄 In Progress** |
 | Phase 2 | Agent Tools 1–5 implementation | ✅ Complete |
-| **Phase 3** | **smolagents Agent orchestration** | **🔄 Next** |
+| Phase 3 | smolagents Agent orchestration | ⏳ Next |
 | Phase 4 | End-to-end demo | ⏳ Planned |
 
 ---
