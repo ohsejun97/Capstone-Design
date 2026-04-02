@@ -208,10 +208,11 @@ def main():
 
     # ── 데이터셋 로드 ──────────────────────────────────────────────────────
     print(f"[1] {args.dataset.upper()} 데이터셋 로드...")
-    try:
-        import DeepPurpose.dataset as dp_dataset
-    except ImportError:
-        sys.exit("❌ pip install DeepPurpose")
+    if args.dataset in ("davis", "kiba", "davis+bindingdb"):
+        try:
+            import DeepPurpose.dataset as dp_dataset
+        except ImportError:
+            sys.exit("❌ pip install DeepPurpose")
 
     if args.dataset == "davis":
         X_drugs, X_targets, _ = dp_dataset.load_process_DAVIS(
