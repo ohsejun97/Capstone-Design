@@ -35,10 +35,10 @@ df = df[df["Ligand InChI"].notnull()]
 df = df[df["Kd (nM)"].notnull()]
 
 # UniProt or PubChem ID 중 하나는 있어야
-df = df[df["PubChem CID"].notnull() | df["UniProt (SwissProt) Primary ID of Target Chain"].notnull()]
+df = df[df["PubChem CID"].notnull() | df["UniProt (SwissProt) Primary ID of Target Chain 1"].notnull()]
 
 # 타깃 서열 null 제거
-df = df[df["BindingDB Target Chain  Sequence"].notnull()]
+df = df[df["BindingDB Target Chain Sequence 1"].notnull()]
 
 print(f"[2] After filtering: {len(df):,} rows")
 
@@ -55,7 +55,7 @@ pkd = -np.log10(df["Kd (nM)"].values * 1e-9)
 
 out = pd.DataFrame({
     "smiles":   df["Ligand SMILES"].values,
-    "sequence": df["BindingDB Target Chain  Sequence"].values,
+    "sequence": df["BindingDB Target Chain Sequence 1"].values,
     "pkd":      pkd,
 })
 
