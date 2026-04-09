@@ -1,0 +1,10 @@
+{
+  "model_dir": "results/SaProt-650M-bindingdb-3di-chemberta-cold_drug",
+  "eval_dataset": "davis",
+  "n_pairs": 30056,
+  "cross_pearson_r": 0.208,
+  "cross_rmse": 1.3029,
+  "cross_mae": 1.1142,
+  "cross_ci": 0.59,
+  "cross_p_value": 6.762043742616501e-291
+}

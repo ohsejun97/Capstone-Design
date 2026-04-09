@@ -36,7 +36,7 @@ parser.add_argument("--eval_datasets", nargs="+", default=["davis", "kiba"],
 args = parser.parse_args()
 
 model_dir = Path(args.model_dir)
-if not model_dir.is_absolute():
+if not model_dir.is_absolute() and not str(args.model_dir).startswith("results"):
     model_dir = Path("results") / args.model_dir
 
 # ── 학습 설정 로드 ──────────────────────────────────────────────────────────────
@@ -96,8 +96,7 @@ print(f"    ✅ SaProt 로드 완료\n")
 # ── Drug encoder 로드 ──────────────────────────────────────────────────────────
 if drug_encoder == "chemberta":
     from tools.chemberta_drug_encoder import ChemBERTaDrugEncoder, CHEMBERTA_DIM
-    drug_enc_model = ChemBERTaDrugEncoder().to(DEVICE)
-    drug_enc_model.eval()
+    drug_enc_model = ChemBERTaDrugEncoder(device=DEVICE)
     DRUG_DIM = CHEMBERTA_DIM
     print(f"[2] ChemBERTa 로드 완료 (dim={DRUG_DIM})\n")
 elif drug_encoder == "morgan":
@@ -219,12 +218,7 @@ def evaluate_on_dataset(eval_dataset: str):
     drug2idx = {d: i for i, d in enumerate(unique_drugs)}
 
     if drug_encoder == "chemberta":
-        drug_embs = torch.zeros(len(unique_drugs), DRUG_DIM, dtype=torch.float32)
-        with torch.no_grad():
-            for i, smi in enumerate(unique_drugs):
-                emb = drug_enc_model.encode(smi)
-                if emb is not None:
-                    drug_embs[i] = emb.cpu()
+        drug_embs = drug_enc_model.encode(unique_drugs, show_progress=True)  # [N, 768] CPU tensor
     elif drug_encoder == "morgan":
         drug_embs = np.zeros((len(unique_drugs), 2048), dtype=np.float32)
         for i, smi in enumerate(unique_drugs):
