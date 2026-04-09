@@ -52,12 +52,12 @@ Instead of requiring expert knowledge (UniProt IDs, SMILES strings, database que
 | ↳ 1c | FoldSeek 3Di structural token integration | ✅ Complete |
 | ↳ 1d | GNN drug encoder — from-scratch 실패 (DAVIS 68 drugs 부족) | ✅ Complete (failed) |
 | ↳ 1e | ChemBERTa frozen — Morgan FP 미달 (DAVIS -0.019, KIBA -0.043) | ✅ Complete (failed) |
-| ↳ 1f | **BindingDB 전처리 완료** (80K쌍, 32K약물, dedup) → GNN/ChemBERTa 재훈련 예정 | 🔄 In Progress |
+| ↳ 1f | **BindingDB + ChemBERTa r=0.8737, GNN r=0.8411** — 기준선(0.8082) 돌파 | ✅ Complete |
 | Phase 2 | **Agent Tools** (Tool 1–5 implementation) | ✅ Complete |
 | Phase 3 | **Agent Orchestration** — smolagents ReAct | ⏳ Next |
 | Phase 4 | **End-to-End Demo** | ⏳ Planned |
 
-**Best DTI model (현재):** SaProt-650M FP16 + 3Di + Morgan FP — DAVIS r=0.8082, KIBA r=0.8032
+**Best DTI model (현재):** SaProt-650M FP16 + 3Di + ChemBERTa (BindingDB) — r=0.8737, CI=0.8633
 (see [Training Report](docs/PHASE1_TRAINING_EXPERIMENTS.md))
 
 ---
@@ -228,7 +228,7 @@ The LLM orchestrator must translate non-English drug names (e.g., "비아그라"
 | Phase 1c | FoldSeek 3Di token integration + re-evaluation | ✅ Complete |
 | Phase 1d | GNN drug encoder (from-scratch) — failed (68 drugs) | ✅ Complete |
 | Phase 1e | ChemBERTa frozen drug encoder — failed (Morgan FP superior) | ✅ Complete |
-| **Phase 1f** | **BindingDB 전처리 + GNN/ChemBERTa 재시도** | **🔄 In Progress** |
+| **Phase 1f** | **BindingDB + ChemBERTa r=0.8737, GNN r=0.8411 — 기준선 돌파** | **✅ Complete** |
 | Phase 2 | Agent Tools 1–5 implementation | ✅ Complete |
 | Phase 3 | smolagents Agent orchestration | ⏳ Next |
 | Phase 4 | End-to-end demo | ⏳ Planned |
