@@ -66,6 +66,9 @@ parser.add_argument("--drug_encoder", default="morgan", choices=["morgan", "gnn"
                     help="Drug encoder: morgan=Morgan FP (fixed), gnn=MPNN+MorganFP (trainable), chemberta=ChemBERTa (frozen)")
 parser.add_argument("--gnn_warmup_epochs", type=int, default=10,
                     help="GNN 2단계 학습: 이 에포크까지 GNN 동결 후 해동 (default=10)")
+parser.add_argument("--split", default="random",
+                    choices=["random", "cold_drug", "cold_protein"],
+                    help="Data split strategy: random (default), cold_drug, cold_protein")
 args = parser.parse_args()
 
 # 자동 기본값
@@ -95,6 +98,7 @@ run_name += f"-{args.dataset}"
 if args.use_3di:                run_name += "-3di"
 if args.drug_encoder == "gnn":        run_name += "-gnn"
 if args.drug_encoder == "chemberta":  run_name += "-chemberta"
+if args.split != "random":            run_name += f"-{args.split}"
 
 print("=" * 60)
 print(f"  DTI Training — {run_name}")
@@ -140,13 +144,44 @@ elif args.dataset == "davis+bindingdb":
 y = np.array(y, dtype=np.float32)
 print(f"    Total: {len(y):,} pairs  |  target: {y.min():.2f} ~ {y.max():.2f}")
 
-rng    = np.random.default_rng(args.seed)
-idx    = rng.permutation(len(y))
-n_tr   = int(len(y) * 0.70)
-n_val  = int(len(y) * 0.10)
-tr_idx  = idx[:n_tr]
-val_idx = idx[n_tr:n_tr + n_val]
-te_idx  = idx[n_tr + n_val:]
+rng = np.random.default_rng(args.seed)
+
+if args.split == "random":
+    idx    = rng.permutation(len(y))
+    n_tr   = int(len(y) * 0.70)
+    n_val  = int(len(y) * 0.10)
+    tr_idx  = idx[:n_tr]
+    val_idx = idx[n_tr:n_tr + n_val]
+    te_idx  = idx[n_tr + n_val:]
+
+elif args.split == "cold_drug":
+    unique_drugs = np.array(list(dict.fromkeys(X_drugs)))
+    rng.shuffle(unique_drugs)
+    n_te  = int(len(unique_drugs) * 0.20)
+    n_val_ = int(len(unique_drugs) * 0.10)
+    test_drugs = set(unique_drugs[:n_te])
+    val_drugs  = set(unique_drugs[n_te:n_te + n_val_])
+    X_drugs_arr = np.array(X_drugs)
+    te_idx  = np.where(np.isin(X_drugs_arr, list(test_drugs)))[0]
+    val_idx = np.where(np.isin(X_drugs_arr, list(val_drugs)))[0]
+    tr_idx  = np.where(~np.isin(X_drugs_arr, list(test_drugs | val_drugs)))[0]
+    print(f"    Cold-drug: {len(test_drugs)} test drugs / {len(val_drugs)} val drugs / "
+          f"{len(unique_drugs)-len(test_drugs)-len(val_drugs)} train drugs")
+
+elif args.split == "cold_protein":
+    unique_prots = np.array(list(dict.fromkeys(X_targets)))
+    rng.shuffle(unique_prots)
+    n_te   = int(len(unique_prots) * 0.20)
+    n_val_ = int(len(unique_prots) * 0.10)
+    test_prots = set(unique_prots[:n_te])
+    val_prots  = set(unique_prots[n_te:n_te + n_val_])
+    X_targets_arr = np.array(X_targets)
+    te_idx  = np.where(np.isin(X_targets_arr, list(test_prots)))[0]
+    val_idx = np.where(np.isin(X_targets_arr, list(val_prots)))[0]
+    tr_idx  = np.where(~np.isin(X_targets_arr, list(test_prots | val_prots)))[0]
+    print(f"    Cold-protein: {len(test_prots)} test proteins / {len(val_prots)} val proteins / "
+          f"{len(unique_prots)-len(test_prots)-len(val_prots)} train proteins")
+
 print(f"    Train: {len(tr_idx):,}  Val: {len(val_idx):,}  Test: {len(te_idx):,}\n")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -755,6 +790,7 @@ result = {
     "lora":              args.lora,
     "use_3di":           args.use_3di,
     "drug_encoder":      args.drug_encoder,
+    "split":             args.split,
     "lora_r":            args.lora_r if args.lora else None,
     "prot_dim":          prot_dim,
     "timestamp":         datetime.now().isoformat(),
