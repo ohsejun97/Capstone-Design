@@ -46,19 +46,20 @@ Instead of requiring expert knowledge (UniProt IDs, SMILES strings, database que
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| Phase 1 | **DTI Model Development** | 1a–1e ✅, 1f 🔄 |
+| Phase 1 | **DTI Model Development** | 1a–1g ✅ |
 | ↳ 1a | DAVIS baseline benchmarking (4 model variants) | ✅ Complete |
 | ↳ 1b | KIBA cross-dataset generalization validation | ✅ Complete |
 | ↳ 1c | FoldSeek 3Di structural token integration | ✅ Complete |
 | ↳ 1d | GNN drug encoder — from-scratch 실패 (DAVIS 68 drugs 부족) | ✅ Complete (failed) |
 | ↳ 1e | ChemBERTa frozen — Morgan FP 미달 (DAVIS -0.019, KIBA -0.043) | ✅ Complete (failed) |
 | ↳ 1f | **BindingDB + ChemBERTa r=0.8737, GNN r=0.8411** — 기준선(0.8082) 돌파 | ✅ Complete |
+| ↳ 1g | **Transfer Learning** — BindingDB Head → DAVIS r=0.8166, KIBA r=0.8163 | ✅ Complete |
 | Phase 2 | **Agent Tools** (Tool 1–5 implementation) | ✅ Complete |
 | Phase 3 | **Agent Orchestration** — smolagents ReAct | ⏳ Next |
 | Phase 4 | **End-to-End Demo** | ⏳ Planned |
 
-**Best DTI model (현재):** SaProt-650M FP16 + 3Di + ChemBERTa (BindingDB) — r=0.8737, CI=0.8633
-(see [Training Report](docs/PHASE1_TRAINING_EXPERIMENTS.md))
+**Best DTI model (현재):** SaProt-650M FP16 + 3Di + ChemBERTa — Transfer Learning (BindingDB→DAVIS r=0.8166, BindingDB→KIBA r=0.8163)
+(see [Training Report](docs/PHASE1_TRAINING_EXPERIMENTS.md) | [Transfer Learning](docs/PHASE1G_TRANSFER_LEARNING.md))
 
 ---
 
@@ -166,28 +167,31 @@ sa_seq = "".join(aa + "#" for aa in aa_seq)
 
 ### Experiment Story
 
-The experiments follow a clear progression: baseline → structural tokens → drug encoder → data scaling.
+The experiments follow a clear progression: baseline → structural tokens → drug encoder → data scaling → transfer learning.
 
 ---
 
 #### Step 1 — Baseline: SaProt + Morgan FP (Placeholder '#' tokens)
 
-DAVIS (442 kinases, 68 unique drugs, 30K pairs):
+DAVIS (379 unique proteins, 68 unique drugs, 30K pairs):
 
-| Model | Pearson r | CI |
-|---|---|---|
-| SaProt-650M FP16 | 0.7855 | 0.8620 |
-| SaProt-35M FP16  | 0.7832 | 0.8602 |
-| SaProt-650M-8bit | 0.7812 | 0.8577 |
-| SaProt-650M-4bit | 0.7914 | 0.8679 |
+| Model | Pearson r | RMSE | CI |
+|---|---|---|---|
+| SaProt-650M FP16 | 0.7855 | — | 0.8620 |
+| SaProt-35M FP16  | 0.7832 | — | 0.8602 |
+| SaProt-650M-8bit | 0.7812 | — | 0.8577 |
+| SaProt-650M-4bit | 0.7914 | — | 0.8679 |
 
-KIBA (229 kinases, 118K pairs):
+KIBA (229 unique proteins, 2068 unique drugs, 118K pairs):
 
-| Model | Pearson r |
-|---|---|
-| SaProt-650M FP16 | 0.7987 |
-| SaProt-35M FP16  | 0.7894 |
-| SaProt-650M-4bit | 0.7994 |
+| Model | Pearson r | RMSE | CI |
+|---|---|---|---|
+| SaProt-650M FP16 | 0.7987 | 0.5024 | 0.8304 |
+| SaProt-35M FP16  | 0.7894 | — | — |
+| SaProt-650M-8bit | 0.7916 | — | — |
+| SaProt-650M-4bit | 0.7994 | — | — |
+
+> RMSE/CI marked — were not recorded in early experiment logs.
 
 ---
 
@@ -196,7 +200,7 @@ KIBA (229 kinases, 118K pairs):
 Replacing '#' placeholder with real FoldSeek 3Di tokens from AlphaFold DB structures.
 DAVIS: 379/379 proteins (100%), KIBA: 228/229 (99.6%).
 
-| Model | DAVIS (Placeholder→3Di) | KIBA (Placeholder→3Di) |
+| Model | DAVIS r (Placeholder→3Di) | KIBA r (Placeholder→3Di) |
 |---|---|---|
 | **SaProt-650M FP16** | **0.7855 → 0.8082 (+0.023)** | **0.7987 → 0.8032 (+0.005)** |
 | SaProt-35M FP16 | 0.7832 → 0.7996 (+0.017) | 0.7894 → 0.8035 (+0.014) |
@@ -211,42 +215,53 @@ DAVIS: 379/379 proteins (100%), KIBA: 228/229 (99.6%).
 
 Replacing fixed Morgan FP with learnable drug encoders, trained on DAVIS (68 unique drugs):
 
-| Drug Encoder | DAVIS r | vs Morgan FP | Root Cause |
-|---|---|---|---|
-| Morgan FP (baseline) | 0.8082 | — | — |
-| GNN from-scratch | 0.5795 | −0.229 | 68 drugs → 2M params cannot generalize |
-| ChemBERTa frozen | 0.7915 | −0.017 | DTI adaptation lacking without fine-tuning |
+| Drug Encoder | DAVIS r | RMSE | CI | vs Morgan FP |
+|---|---|---|---|---|
+| Morgan FP (baseline) | 0.8082 | — | — | — |
+| GNN from-scratch | 0.5795 | 0.7618 | 0.7907 | −0.229 |
+| ChemBERTa frozen (DAVIS) | 0.7915 | 0.5627 | 0.8608 | −0.017 |
+| ChemBERTa frozen (KIBA) | 0.7667 | 0.5351 | 0.8148 | −0.037 |
+| GNN from-scratch (KIBA) | 0.7191 | 0.5783 | 0.7828 | −0.084 |
 
-**Diagnosis:** The problem is not the model architecture — it is the data. DAVIS has only 68 unique drugs, KIBA has 2,068. GNN needs thousands of diverse molecules to learn generalizable representations.
+**Diagnosis:** The problem is not the model architecture — it is the data. DAVIS has only 68 unique drugs. GNN needs thousands of diverse molecules to learn generalizable representations.
 
 ---
 
 #### Step 4 — BindingDB Scaling: Drug Diversity Solves the Problem
 
 **BindingDB preprocessing** (server, 500GB RAM):
-- Source: BindingDB_All.tsv (7.9 GB, 3.17M rows)
-- Filtered: single-chain proteins, valid SMILES, Kd assay, Kd ∈ (0, 10M] nM
-- Kd(nM) → pKd = −log₁₀(Kd × 10⁻⁹)
-- Deduplication: (SMILES, sequence) pairs → mean pKd
-- **Result: 80,795 unique pairs | 32,480 unique drugs | 2,384 unique proteins**
+- Source: BindingDB_All.tsv (7.9 GB, 3.17M rows) → 80,795 unique pairs | 32,480 drugs | 2,384 proteins
+- FoldSeek 3Di cache: 2,309/2,384 proteins (96.9%)
 
-FoldSeek 3Di cache for 2,384 BindingDB proteins (server):
-- UniProt IDs extracted from BindingDB → BLAST skipped for known IDs
-- **2,309/2,384 proteins (96.9%) successfully extracted**
+| Drug Encoder | Split | Pearson r | RMSE | CI |
+|---|---|---|---|---|
+| **ChemBERTa** | **random** | **0.8737** | **0.7933** | **0.8633** |
+| GNN | random | 0.8411 | 0.8842 | 0.8459 |
+| ChemBERTa | cold_drug | 0.7083 | 1.2543 | 0.7473 |
+| ChemBERTa | cold_protein | 0.6549 | 1.1840 | 0.7430 |
 
-Training on BindingDB with **cold-drug split** (test drugs never seen during training):
+Zero-shot cross-dataset evaluation (cold_drug model → DAVIS/KIBA, no fine-tuning):
 
-| Drug Encoder | Train Data | Split | BindingDB Test r | DAVIS (cross) | KIBA (cross) |
+| Target | Pearson r | RMSE | CI | Note |
+|---|---|---|---|---|
+| DAVIS | 0.208 | 1.3029 | 0.5900 | domain shift (kinase-specific) |
+| KIBA | 0.160 | 5.7871 | 0.5505 | label mismatch (KIBA score ≠ pKd) |
+
+**Key finding:** GNN and ChemBERTa both surpass the Morgan FP baseline (0.8082) once trained on BindingDB. Zero-shot cross-dataset transfer fails due to domain shift and label scale mismatch.
+
+---
+
+#### Step 5 — Transfer Learning: BindingDB Head → DAVIS/KIBA
+
+SaProt + ChemBERTa embeddings reused (cached). Only MLP Head fine-tuned per dataset.
+KIBA labels z-score normalized to handle scale mismatch.
+
+| Target | Pearson r | Spearman r | RMSE | CI | vs Direct Training |
 |---|---|---|---|---|---|
-| Morgan FP | DAVIS | random | 0.8082 | — | — |
-| ChemBERTa | DAVIS | random | 0.7915 | — | — |
-| **ChemBERTa** | **BindingDB** | **random** | **0.8737** | — | — |
-| **ChemBERTa** | **BindingDB** | **cold_drug** | **TBD** | **TBD** | **TBD** |
-| **ChemBERTa** | **BindingDB** | **cold_protein** | **TBD** | **TBD** | **TBD** |
+| **DAVIS** | **0.8166** | 0.6794 | 0.5303 | 0.8747 | +0.0084 vs 0.8082 |
+| **KIBA** | **0.8163** | 0.8114 | 0.4826 | 0.8414 | +0.0131 vs 0.8032 |
 
-*(Cold-split + cross-eval experiments running — results will be updated)*
-
-**Key finding:** GNN and ChemBERTa both surpass the Morgan FP baseline (0.8082) once trained on BindingDB (32K drugs vs 68). The bottleneck was data, not model architecture.
+**Key finding:** Transfer Learning outperforms training directly on DAVIS/KIBA. BindingDB's 32K-drug diversity provides richer embeddings than the smaller benchmarks alone. Head re-calibration suffices — no encoder retraining needed.
 
 ---
 
@@ -288,8 +303,9 @@ The LLM orchestrator must translate non-English drug names (e.g., "비아그라"
 | Phase 1b | KIBA cross-dataset validation | ✅ Complete |
 | Phase 1c | FoldSeek 3Di token integration + re-evaluation | ✅ Complete |
 | Phase 1d | GNN drug encoder (from-scratch) — failed (68 drugs) | ✅ Complete |
-| Phase 1e | ChemBERTa frozen drug encoder — failed (Morgan FP superior) | ✅ Complete |
-| **Phase 1f** | **BindingDB + ChemBERTa r=0.8737, GNN r=0.8411 — 기준선 돌파** | **✅ Complete** |
+| Phase 1e | ChemBERTa frozen drug encoder — failed (Morgan FP superior on DAVIS) | ✅ Complete |
+| Phase 1f | BindingDB + ChemBERTa r=0.8737, GNN r=0.8411 — 기준선 돌파 | ✅ Complete |
+| **Phase 1g** | **Transfer Learning: BindingDB→DAVIS r=0.8166, KIBA r=0.8163 — 직접 학습 초과** | **✅ Complete** |
 | Phase 2 | Agent Tools 1–5 implementation | ✅ Complete |
 | Phase 3 | smolagents Agent orchestration | ⏳ Next |
 | Phase 4 | End-to-end demo | ⏳ Planned |
@@ -305,3 +321,4 @@ The LLM orchestrator must translate non-English drug names (e.g., "비아그라"
 | [Phase 1 Pipeline Design](docs/PHASE1_REFERENCE_PIPELINE.md) | Architecture rationale, why frozen encoder + MLP |
 | [Phase 1 Experiment Log](docs/PHASE1_EXPERIMENT_LOG.md) | V1→V3 iteration history, failure analysis |
 | [Phase 2 Agent Tools](docs/PHASE2_AGENT_TOOLS.md) | Tool 2–5 implementation details and test results |
+| [Phase 1g Transfer Learning](docs/PHASE1G_TRANSFER_LEARNING.md) | Transfer Learning 실험 분석 — BindingDB→DAVIS/KIBA |
