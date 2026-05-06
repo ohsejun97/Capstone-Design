@@ -179,6 +179,7 @@ regressor: Linear(512→256) → GELU → Dropout(0.1) → Linear(256→64) → 
 | V16 | 2026-04-09 | Zero-shot → KIBA (cross-eval) | 0.160 | 5.7871 | 0.5505 | ❌ 레이블 불일치 |
 | **V17** | **2026-04-09** | **Transfer: BindingDB→DAVIS (head fine-tune)** | **0.8166** | **0.5303** | **0.8747** | **✅ 직접 학습 초과** |
 | **V18** | **2026-04-09** | **Transfer: BindingDB→KIBA (head fine-tune)** | **0.8163** | **0.4826** | **0.8414** | **✅ 직접 학습 초과** |
+| V19 | 2026-05-06 | ChemBERTa fine-tune (layers 10~11) + BindingDB random | TBD | TBD | TBD | 🔄 진행 중 |
 
 ---
 
@@ -427,6 +428,25 @@ SaProt + ChemBERTa 임베딩은 캐시 재사용 → 추가 GPU 로드 없이 DA
 
 상세 분석: [docs/PHASE1G_TRANSFER_LEARNING.md](PHASE1G_TRANSFER_LEARNING.md)
 
+### Phase 1h — ChemBERTa Fine-tuning: BindingDB Random (🔄 진행 중)
+
+**배경:** Phase 1f의 frozen ChemBERTa(r=0.8737)는 사전학습 표현을 그대로 활용했다. DTI pKd 예측 태스크에 맞게 상위 레이어를 fine-tune하면 더 나은 화학 표현을 학습할 수 있다는 가설 검증.
+
+**설정:**
+- ChemBERTa layers 10~11 + pooler unfreeze (14.77M trainable)
+- SaProt frozen + 캐시 재사용, ChemBERTa on-the-fly 인코딩
+- LR: Head 5e-4 / ChemBERTa 1e-5 (차등 학습률)
+- BindingDB random split, batch_size=32 (GTX 1650 SUPER 4GB)
+
+| 방식 | Pearson r | RMSE | CI | 학습 시간 |
+|------|-----------|------|----|---------|
+| ChemBERTa frozen (Phase 1f 기준선) | 0.8737 | 0.7933 | 0.8633 | 141s |
+| **ChemBERTa fine-tune (Phase 1h)** | **TBD** | **TBD** | **TBD** | **TBD** |
+
+상세: [docs/PHASE1H_CHEMBERTA_UNFREEZE.md](PHASE1H_CHEMBERTA_UNFREEZE.md)
+
+---
+
 ### Phase 3 — Agent 오케스트레이션 (⏳ Next)
 
-Phase 1g 완료 후 최종 DTI 모델을 Tool 1에 통합하고 smolagents ReAct 오케스트레이션 구현.
+Phase 1h 완료 후 최종 DTI 모델을 Tool 1에 통합하고 smolagents ReAct 오케스트레이션 구현.

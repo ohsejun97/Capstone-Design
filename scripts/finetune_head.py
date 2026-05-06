@@ -39,6 +39,22 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 
+
+# ── stdout + 파일 동시 출력 ────────────────────────────────────────────────────
+class _Tee:
+    def __init__(self, *files):
+        self._files = files
+    def write(self, data):
+        for f in self._files:
+            f.write(data)
+            f.flush()
+    def flush(self):
+        for f in self._files:
+            f.flush()
+    def fileno(self):
+        # wget 등 내부에서 fileno() 호출 시 원본 stdout 기준으로 반환
+        return self._files[0].fileno()
+
 # ── 인자 파싱 ──────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser()
 parser.add_argument("--source_model", default="results/SaProt-650M-bindingdb-3di-chemberta",
@@ -63,6 +79,13 @@ np.random.seed(args.seed)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 ROOT = Path(__file__).parent.parent
+
+# ── 로그 파일 설정 ────────────────────────────────────────────────────────────
+LOG_DIR = ROOT / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+_log_name = f"finetune_{args.target_dataset}_{args.split}.log"
+_log_file = open(LOG_DIR / _log_name, "w", encoding="utf-8")
+sys.stdout = _Tee(sys.__stdout__, _log_file)
 
 # ── source model 설정 로드 ─────────────────────────────────────────────────────
 source_dir = Path(args.source_model)
@@ -297,12 +320,15 @@ def evaluate(loader):
     else:
         preds_raw  = preds
         labels_raw = labels
-    r, _    = pearsonr(preds_raw, labels_raw)
-    sp_r, _ = spearmanr(preds_raw, labels_raw)
-    rmse    = float(np.sqrt(np.mean((preds_raw - labels_raw) ** 2)))
-    mae     = float(np.mean(np.abs(preds_raw - labels_raw)))
-    ci      = _concordance_index(labels_raw, preds_raw)
-    return float(r), float(sp_r), rmse, mae, ci
+    r, p_val = pearsonr(preds_raw, labels_raw)
+    sp_r, _  = spearmanr(preds_raw, labels_raw)
+    rmse     = float(np.sqrt(np.mean((preds_raw - labels_raw) ** 2)))
+    mae      = float(np.mean(np.abs(preds_raw - labels_raw)))
+    ci       = _concordance_index(labels_raw, preds_raw)
+    ss_res   = float(np.sum((labels_raw - preds_raw) ** 2))
+    ss_tot   = float(np.sum((labels_raw - labels_raw.mean()) ** 2))
+    r2       = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+    return float(r), float(sp_r), rmse, mae, ci, r2, float(p_val)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # [6] 학습 루프
@@ -334,7 +360,7 @@ for epoch in range(1, args.epochs + 1):
     train_loss /= len(tr_idx)
     scheduler.step()
 
-    val_r, val_sp_r, val_rmse, val_mae, val_ci = evaluate(val_loader)
+    val_r, val_sp_r, val_rmse, val_mae, val_ci, val_r2, _ = evaluate(val_loader)
     history.append({"epoch": epoch, "train_loss": train_loss,
                     "val_r": val_r, "val_rmse": val_rmse})
 
@@ -362,17 +388,19 @@ head.load_state_dict(best_head_state)
 torch.save(best_head_state, out_dir / "dti_head.pt")
 print(f"\n[5] Best head 저장: {out_dir}/dti_head.pt")
 
-test_r, test_sp_r, test_rmse, test_mae, test_ci = evaluate(test_loader)
+test_r, test_sp_r, test_rmse, test_mae, test_ci, test_r2, test_pval = evaluate(test_loader)
 elapsed = time.time() - t_start
 
 print(f"\n{'='*62}")
 print(f"  Fine-tune 결과 — {args.target_dataset.upper()} ({args.split})")
 print(f"{'='*62}")
-print(f"  Pearson r  : {test_r:.4f}")
-print(f"  Spearman r : {test_sp_r:.4f}")
-print(f"  RMSE       : {test_rmse:.4f}")
-print(f"  MAE        : {test_mae:.4f}")
-print(f"  CI         : {test_ci:.4f}")
+print(f"  Pearson r  : {test_r:.4f}   (선형 상관계수, 1.0이 완벽 예측)")
+print(f"  p-value    : {test_pval:.2e}  (통계적 유의성, <0.05면 유의)")
+print(f"  Spearman r : {test_sp_r:.4f}   (순위 기반 상관계수, 스케일 무관)")
+print(f"  R²         : {test_r2:.4f}   (설명된 분산 비율, 1.0이 완벽)")
+print(f"  RMSE       : {test_rmse:.4f}   (평균 예측 오차 pKd 단위)")
+print(f"  MAE        : {test_mae:.4f}   (평균 절대 오차 pKd 단위)")
+print(f"  CI         : {test_ci:.4f}   (결합력 순위 일치도, 0.5=랜덤)")
 print(f"  학습 시간  : {elapsed:.1f}s")
 print(f"{'='*62}\n")
 
@@ -392,11 +420,14 @@ result = {
     "epochs_trained":     epoch,
     "best_val_r":         round(best_val_r,  4),
     "test_pearson_r":     round(test_r,      4),
+    "test_p_value":       float(test_pval),
     "test_spearman_r":    round(test_sp_r,   4),
+    "test_r2":            round(test_r2,     4),
     "test_rmse":          round(test_rmse,   4),
     "test_mae":           round(test_mae,    4),
     "test_ci":            round(test_ci,     4),
     "train_time_sec":     round(elapsed,     1),
+    "log_file":           str(LOG_DIR / _log_name),
     "n_train":            int(len(tr_idx)),
     "n_val":              int(len(val_idx)),
     "n_test":             int(len(te_idx)),
@@ -410,3 +441,6 @@ if args.target_dataset == "kiba":
 with open(out_dir / "result.json", "w") as f:
     json.dump(result, f, indent=2, ensure_ascii=False)
 print(f"결과 저장: {out_dir}/result.json")
+print(f"로그 저장: {LOG_DIR / _log_name}")
+sys.stdout = sys.__stdout__   # 원본 복원 후 파일 닫기
+_log_file.close()
