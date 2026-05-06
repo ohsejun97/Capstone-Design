@@ -54,12 +54,12 @@ Instead of requiring expert knowledge (UniProt IDs, SMILES strings, database que
 | ↳ 1e | ChemBERTa frozen — Morgan FP 미달 (DAVIS -0.019, KIBA -0.043) | ✅ Complete (failed) |
 | ↳ 1f | **BindingDB + ChemBERTa r=0.8737, GNN r=0.8411** — 기준선(0.8082) 돌파 | ✅ Complete |
 | ↳ 1g | **Transfer Learning** — BindingDB Head → DAVIS r=0.8166, KIBA r=0.8163 | ✅ Complete |
-| ↳ 1h | **ChemBERTa Fine-tuning** — layers 10~11 unfreeze, BindingDB random split | 🔄 Running |
+| ↳ 1h | **ChemBERTa Fine-tuning** — layers 4~5 unfreeze, BindingDB r=**0.8923** (+0.0186 vs frozen) | ✅ Complete |
 | Phase 2 | **Agent Tools** (Tool 1–5 implementation) | ✅ Complete |
 | Phase 3 | **Agent Orchestration** — smolagents ReAct | ⏳ Next |
 | Phase 4 | **End-to-End Demo** | ⏳ Planned |
 
-**Best DTI model (현재):** SaProt-650M FP16 + 3Di + ChemBERTa — Transfer Learning (BindingDB→DAVIS r=0.8166, BindingDB→KIBA r=0.8163)
+**Best DTI model (현재):** SaProt-650M FP16 + 3Di + ChemBERTa fine-tune — BindingDB r=**0.8923**, RMSE=0.7387 (SOTA r≈0.89 수준)
 (see [Training Report](docs/PHASE1_TRAINING_EXPERIMENTS.md) | [Transfer Learning](docs/PHASE1G_TRANSFER_LEARNING.md) | [ChemBERTa Fine-tuning](docs/PHASE1H_CHEMBERTA_UNFREEZE.md))
 
 ---

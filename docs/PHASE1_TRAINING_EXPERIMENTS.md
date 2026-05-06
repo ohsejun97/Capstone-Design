@@ -179,22 +179,22 @@ regressor: Linear(512→256) → GELU → Dropout(0.1) → Linear(256→64) → 
 | V16 | 2026-04-09 | Zero-shot → KIBA (cross-eval) | 0.160 | 5.7871 | 0.5505 | ❌ 레이블 불일치 |
 | **V17** | **2026-04-09** | **Transfer: BindingDB→DAVIS (head fine-tune)** | **0.8166** | **0.5303** | **0.8747** | **✅ 직접 학습 초과** |
 | **V18** | **2026-04-09** | **Transfer: BindingDB→KIBA (head fine-tune)** | **0.8163** | **0.4826** | **0.8414** | **✅ 직접 학습 초과** |
-| V19 | 2026-05-06 | ChemBERTa fine-tune (layers 10~11) + BindingDB random | TBD | TBD | TBD | 🔄 진행 중 |
+| **V19** | **2026-05-06** | **ChemBERTa fine-tune (layers 4~5) + BindingDB random** | **0.8923** | **0.7387** | **0.8770** | **✅ 기준선 +0.0186** |
 
 ---
 
 ## 최종 모델 선정
 
-**채택: SaProt-650M FP16 + 3Di + ChemBERTa (Transfer Learning)**
+**채택: SaProt-650M FP16 + 3Di + ChemBERTa fine-tune (Phase 1h)**
 
-| 기준 | BindingDB (raw) | DAVIS (transfer) | KIBA (transfer) |
-|------|----------------|-----------------|----------------|
-| Pearson r | 0.8737 | **0.8166** | **0.8163** |
-| Spearman r | — | 0.6794 | 0.8114 |
-| RMSE | 0.7933 | 0.5303 | 0.4826 |
-| CI | 0.8633 | **0.8747** | 0.8414 |
-| Peak VRAM | 2.6GB | 1.3GB | 1.3GB |
-| 학습 시간 | 141초 | 194초 | 794초 |
+| 기준 | BindingDB frozen (1f) | BindingDB fine-tune (1h) | DAVIS transfer (1g) | KIBA transfer (1g) |
+|------|----------------------|--------------------------|--------------------|--------------------|
+| Pearson r | 0.8737 | **0.8923** | 0.8166 | 0.8163 |
+| Spearman r | — | 0.8722 | 0.6794 | 0.8114 |
+| RMSE | 0.7933 | **0.7387** | 0.5303 | 0.4826 |
+| CI | 0.8633 | **0.8770** | 0.8747 | 0.8414 |
+| Peak VRAM | 2.6GB | **0.9GB** | 1.3GB | 1.3GB |
+| 학습 시간 | 141초 | 24,824초 | 194초 | 794초 |
 
 **전체 비교 (DAVIS 기준):**
 
@@ -441,12 +441,16 @@ SaProt + ChemBERTa 임베딩은 캐시 재사용 → 추가 GPU 로드 없이 DA
 | 방식 | Pearson r | RMSE | CI | 학습 시간 |
 |------|-----------|------|----|---------|
 | ChemBERTa frozen (Phase 1f 기준선) | 0.8737 | 0.7933 | 0.8633 | 141s |
-| **ChemBERTa fine-tune (Phase 1h)** | **TBD** | **TBD** | **TBD** | **TBD** |
+| **ChemBERTa fine-tune (Phase 1h)** | **0.8923** | **0.7387** | **0.8770** | **24,824s** |
 
 상세: [docs/PHASE1H_CHEMBERTA_UNFREEZE.md](PHASE1H_CHEMBERTA_UNFREEZE.md)
+
+**결론:** ChemBERTa fine-tuning으로 frozen 기준선(0.8737) 대비 r=**0.8923** 달성. RMSE도 0.7933→0.7387로 개선. SOTA(r≈0.89) 수준 도달. 과적합 없이 50 epoch 완주.
+
+**다음 단계:** fine-tuned ChemBERTa로 DAVIS/KIBA drug embedding 재계산 후 head fine-tune → Phase 1g(r=0.8166/0.8163) 초과 여부 확인.
 
 ---
 
 ### Phase 3 — Agent 오케스트레이션 (⏳ Next)
 
-Phase 1h 완료 후 최종 DTI 모델을 Tool 1에 통합하고 smolagents ReAct 오케스트레이션 구현.
+Phase 1h 완료. 최종 DTI 모델(ChemBERTa fine-tune)을 Tool 1에 통합하고 smolagents ReAct 오케스트레이션 구현.
