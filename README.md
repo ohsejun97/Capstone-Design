@@ -55,12 +55,13 @@ Instead of requiring expert knowledge (UniProt IDs, SMILES strings, database que
 | ↳ 1f | **BindingDB + ChemBERTa r=0.8737, GNN r=0.8411** — 기준선(0.8082) 돌파 | ✅ Complete |
 | ↳ 1g | **Transfer Learning** — BindingDB Head → DAVIS r=0.8166, KIBA r=0.8163 | ✅ Complete |
 | ↳ 1h | **ChemBERTa Fine-tuning** — layers 4~5 unfreeze, BindingDB r=**0.8923** (+0.0186 vs frozen) | ✅ Complete |
+| ↳ 1i | **ft ChemBERTa Transfer** — DAVIS r=**0.8677** (+0.051), KIBA r=**0.8594** (+0.043) | ✅ Complete |
 | Phase 2 | **Agent Tools** (Tool 1–5 implementation) | ✅ Complete |
 | Phase 3 | **Agent Orchestration** — smolagents ReAct | ⏳ Next |
 | Phase 4 | **End-to-End Demo** | ⏳ Planned |
 
-**Best DTI model (현재):** SaProt-650M FP16 + 3Di + ChemBERTa fine-tune — BindingDB r=**0.8923**, RMSE=0.7387 (SOTA r≈0.89 수준)
-(see [Training Report](docs/PHASE1_TRAINING_EXPERIMENTS.md) | [Transfer Learning](docs/PHASE1G_TRANSFER_LEARNING.md) | [ChemBERTa Fine-tuning](docs/PHASE1H_CHEMBERTA_UNFREEZE.md))
+**Best DTI model (현재):** SaProt-650M FP16 + 3Di + ChemBERTa ft Transfer — DAVIS r=**0.8677**, KIBA r=**0.8594** (4GB VRAM, SOTA 대비 격차 0.02~0.04)
+(see [Training Report](docs/PHASE1_TRAINING_EXPERIMENTS.md) | [ChemBERTa Fine-tuning](docs/PHASE1H_CHEMBERTA_UNFREEZE.md) | [ft Transfer](docs/PHASE1I_TRANSFER_FT.md))
 
 ---
 
