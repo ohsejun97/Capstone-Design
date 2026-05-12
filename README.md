@@ -117,9 +117,11 @@ Protein encoder: protein sequence + 3D   → vector
 
 1. **Protein encoder lacks 3D structure.** Models like DeepPurpose use CNN or AAC descriptors that operate on sequence only. Binding sites are determined by 3D conformation, not sequence alone. SaProt (a structure-aware PLM) addresses this via FoldSeek 3Di tokens — but DTI-specific fine-tuning of SaProt requires >16GB VRAM (infeasible here). So SaProt is used **frozen**: its general protein representations are leveraged as-is.
 
-2. **Drug encoder has no learnable representation.** Morgan Fingerprint is a deterministic bit vector computed from SMILES with no trainable parameters. It loses global molecular topology. This is the primary cause of the gap vs SOTA (r=0.81 vs 0.89). **Phase 1d plan:** replace with a GNN (AttentiveFP/MPNN) that learns directly from molecular graphs.
+2. **Drug encoder pretrained on the wrong objective.** Morgan Fingerprint has no trainable parameters. ChemBERTa (frozen) is pretrained on masked language modeling (MLM) over PubChem — optimizing for generic molecular property prediction, not binding affinity. The representations it produces are not aligned with pKd. **Solution:** fine-tune ChemBERTa's upper layers (4~5 of 6) on BindingDB DTI data, adapting the representations toward binding-relevant chemical features (hydrophobicity, H-bond donors/acceptors, shape complementarity) while keeping lower layers frozen to preserve fundamental chemical grammar.
 
-**Core hypothesis:** Independently improving both encoders — protein via 3Di structural tokens, drug via GNN — closes the performance gap without full fine-tuning, achieving DAVIS r ≥ 0.85 within 4GB VRAM.
+**Why only upper layers?** Lower layers (0~3) encode universal chemical structure (atom types, bond order, functional groups) — useful for any task. Upper layers encode task-specific high-level features — these are what we adapt. Full fine-tuning risks overfitting (44M params, 56K training pairs) and destroying lower-layer representations.
+
+**Core hypothesis:** Independently improving both encoders — protein via 3Di structural tokens, drug via ChemBERTa fine-tuning — closes the performance gap without full fine-tuning, achieving DAVIS r ≥ 0.85 within 4GB VRAM.
 
 ```
 SMILES → [Phase 1a–1c] Morgan FP (fixed)           ─┐
