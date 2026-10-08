@@ -63,3 +63,6 @@ checkpoints/
 results/SaProt-650M-bindingdb-3di-chemberta-bdb202610/
 .env.*
 !.env.example
+
+# 취업 준비 메모 — public 저장소에 올리지 않는다 (공개용은 별도로 다듬는다)
+docs/SKILLS_MAP.md
