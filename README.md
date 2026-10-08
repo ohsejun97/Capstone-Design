@@ -422,7 +422,7 @@ The LLM orchestrator must translate non-English drug names (e.g., "비아그라"
 | [Phase 1 Pipeline Design](docs/PHASE1_REFERENCE_PIPELINE.md) | Architecture rationale, why frozen encoder + MLP |
 | [Phase 1 Experiment Log](docs/PHASE1_EXPERIMENT_LOG.md) | V1→V3 초기 실패 히스토리 |
 | [Phase 5 MLOps](docs/PHASE5_MLOPS.md) | 실험 추적·에이전트 그래프·컨테이너화 설계와 검증 로그 |
-| [Kubernetes 배포](k8s/README.md) | k3s 매니페스트, GPU 스케줄링 제약, 알려진 한계 |
+| [Kubernetes 배포](deploy/k8s/README.md) | k3s 매니페스트, GPU 스케줄링 제약, 알려진 한계 |
 | [Phase 6 자동화](docs/PHASE6_AUTOMATION.md) | SelfTest·n8n·Ralph Loop 설계 근거와 검증 로그 |
 | [n8n 워크플로](n8n/README.md) | 왜 질의 경로에 n8n을 쓰지 않았는지, 워크플로 4개 |
 | [기술 스택 ↔ 직무 매핑](docs/SKILLS_MAP.md) | 무엇을 주장할 수 있고 무엇은 아직 아닌지, 근거와 함께 |

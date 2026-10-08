@@ -50,8 +50,8 @@ docker save fusiondti-ui:latest  | sudo k3s ctr images import -
 
 # 배포
 kubectl apply -f k8s/namespace.yaml
-cp k8s/secret.yaml.example k8s/secret.yaml && $EDITOR k8s/secret.yaml
-kubectl apply -f k8s/
+cp deploy/k8s/secret.yaml.example deploy/k8s/secret.yaml && $EDITOR deploy/k8s/secret.yaml
+kubectl apply -f deploy/k8s/
 
 # 확인
 kubectl -n fusiondti get pods,svc,hpa

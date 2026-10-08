@@ -6,7 +6,7 @@
 #     (web_pipeline/backend.py의 http 모드). 같은 이미지를 쓰면 CPU 컨테이너가
 #     3GB 넘는 GPU 스택을 지고 다닌다.
 #   · 스케일 축이 다르다. 모델 서버는 GPU 1대에 묶이지만 UI는 수평 확장된다
-#     (k8s/hpa.yaml이 UI에만 HPA를 다는 이유).
+#     (deploy/k8s/hpa.yaml이 UI에만 HPA를 다는 이유).
 #
 # rdkit은 UI에도 필요하다 — 분자 구조 그림(_smiles_to_png)을 UI가 직접 그린다.
 # CPU 전용 wheel이라 torch 대비 훨씬 가볍다(수십 MB).

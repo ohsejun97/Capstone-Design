@@ -115,8 +115,8 @@ jobs:
           curl -sSLo kubeconform.tar.gz \
             https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
           tar xzf kubeconform.tar.gz kubeconform
-          cp k8s/secret.yaml.example /tmp/secret.yaml
-          ./kubeconform -strict -summary -ignore-missing-schemas k8s/*.yaml /tmp/secret.yaml
+          cp deploy/k8s/secret.yaml.example /tmp/secret.yaml
+          ./kubeconform -strict -summary -ignore-missing-schemas deploy/k8s/*.yaml /tmp/secret.yaml
 
   build:
     name: 이미지 빌드 (UI만)

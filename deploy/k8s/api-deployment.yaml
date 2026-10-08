@@ -1,7 +1,7 @@
 # 추론 API — GPU 파드.
 #
 # replicas는 1에 고정한다. 노드에 할당 가능한 nvidia.com/gpu가 1개뿐이라
-# 2로 올리면 두 번째 파드가 영영 Pending에 남는다 (k8s/README.md 참조).
+# 2로 올리면 두 번째 파드가 영영 Pending에 남는다 (deploy/k8s/README.md 참조).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
