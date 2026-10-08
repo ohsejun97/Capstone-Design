@@ -8,7 +8,7 @@ app.py는 원래 tools/를 직접 import했다. 한 프로세스에서는 잘 �
 그래서 호출부를 이 모듈 뒤로 숨기고 두 가지 구현을 둔다:
 
     local  — tools/를 직접 import (기존 동작 그대로. 노트북/단일 프로세스용)
-    http   — web_pipeline/api.py 를 HTTP로 호출 (컨테이너 분리 구성)
+    http   — services/agent/app/api.py 를 HTTP로 호출 (컨테이너 분리 구성)
 
 선택은 환경변수로 한다:
     FUSIONDTI_BACKEND=local            (기본값 — 기존 사용법이 바뀌지 않는다)

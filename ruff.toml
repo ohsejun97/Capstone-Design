@@ -13,7 +13,7 @@ exclude = [
     "tools/",
     "experiments/",
     "train_dti_saprot.py",
-    "web_pipeline/api.py",
+    "services/agent/app/api.py",
     "web_pipeline/app.py",
 ]
 

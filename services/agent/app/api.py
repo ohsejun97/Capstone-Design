@@ -10,7 +10,7 @@ Endpoints:
     POST /predict                 — Full DTI prediction pipeline
 
 Run (프로젝트 루트에서):
-    uvicorn web_pipeline.api:app --reload --port 8000
+    uvicorn services.agent.app.api:app --reload --port 8000
 """
 
 import sys
@@ -22,7 +22,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-ROOT = Path(__file__).parent.parent   # Capstone-Design/
+ROOT = Path(__file__).parents[3]   # Capstone-Design/ (services/agent/app/api.py 기준)
 sys.path.insert(0, str(ROOT))
 
 # ── App setup ─────────────────────────────────────────────────────────────────

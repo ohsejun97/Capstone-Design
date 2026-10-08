@@ -258,7 +258,7 @@ def test_api_endpoints_exist_in_api_module():
 
     엔드포인트 이름을 바꾸면 워크플로가 조용히 404를 받는다 — 여기서 잡는다.
     """
-    source = (N8N_DIR.parent / "web_pipeline" / "api.py").read_text()
+    source = (N8N_DIR.parent / "services" / "agent" / "app" / "api.py").read_text()
 
     called = set()
     for path in WORKFLOW_PATHS:

@@ -57,6 +57,7 @@ COPY tools/ ./tools/
 COPY services/__init__.py ./services/
 COPY services/agent/__init__.py ./services/agent/
 COPY services/agent/graph/ ./services/agent/graph/
+COPY services/agent/app/ ./services/agent/app/
 COPY mlops/ ./mlops/
 COPY scripts/ ./scripts/
 COPY web_pipeline/ ./web_pipeline/
@@ -78,4 +79,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=180s --retries=3 \
     CMD curl -fsS http://localhost:8000/health || exit 1
 
-CMD ["uvicorn", "web_pipeline.api:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "services.agent.app.api:app", "--host", "0.0.0.0", "--port", "8000"]
