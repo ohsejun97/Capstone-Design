@@ -5,7 +5,7 @@ tools/ 하위 모듈은 torch·rdkit·네트워크를 요구한다. 그래프의
 (재시도 / OOD 경고 / 병렬 fan-in / 실패 단락)을 검증하는 데는 그게 필요 없고,
 CI에서 GPU와 외부 API를 쓸 수도 없다.
 
-agent.nodes는 도구를 **함수 안에서 지연 import** 하므로, 노드가 처음 실행되는
+services.agent.graph.nodes는 도구를 **함수 안에서 지연 import** 하므로, 노드가 처음 실행되는
 시점에 sys.modules에 가짜 모듈이 꽂혀 있으면 그것을 집는다. 그래서 여기서
 sys.modules를 통째로 대체한다.
 """

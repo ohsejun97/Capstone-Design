@@ -65,8 +65,8 @@ def _default_model_predictor() -> Callable[[str, str], dict]:
 
 def _default_agent_runner() -> Callable[[str], dict]:
     """LangGraph를 전 경로로 돌려 최종 상태를 돌려주는 함수."""
-    from agent.graph import build_graph
-    from agent.state import new_state
+    from services.agent.graph.graph import build_graph
+    from services.agent.graph.state import new_state
 
     app = build_graph()
 

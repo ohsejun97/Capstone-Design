@@ -127,7 +127,7 @@ def _extract_with_rules(query: str) -> tuple[str | None, str | None]:
     휴리스틱: 표적 유전자 심볼은 전부 대문자(EGFR, ABL1, BCR-ABL)이고,
     약물명은 첫 글자만 대문자인 긴 단어(Imatinib, Gleevec)인 경우가 압도적이다.
     """
-    from agent.nodes import ALIAS_TO_GENE, BRAND_TO_GENERIC
+    from services.agent.graph.nodes import ALIAS_TO_GENE, BRAND_TO_GENERIC
 
     # 1) 사전에 있는 이름이 질의에 그대로 박혀 있으면 그것이 가장 확실하다.
     #    긴 키부터 봐야 "abl"이 "bcr-abl"보다 먼저 걸리지 않는다.

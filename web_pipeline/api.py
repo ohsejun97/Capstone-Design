@@ -260,8 +260,8 @@ async def agent_ask(req: AskRequest):
     if not req.query.strip():
         raise HTTPException(status_code=422, detail="query가 비어 있습니다.")
 
-    from agent.graph import build_graph
-    from agent.state import new_state
+    from services.agent.graph.graph import build_graph
+    from services.agent.graph.state import new_state
 
     final = build_graph().invoke(new_state(req.query))
 

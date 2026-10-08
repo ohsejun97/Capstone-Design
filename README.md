@@ -107,11 +107,11 @@ python scripts/build_3di_cache.py --dataset bindingdb --resume
 ### Phase 3 — 에이전트 (LangGraph)
 
 ```bash
-python -m agent.graph "Does Imatinib bind to BCR-ABL?" --verbose
-python -m agent.graph --draw                    # 그래프 구조를 Mermaid로 출력
+python -m services.agent.graph.graph "Does Imatinib bind to BCR-ABL?" --verbose
+python -m services.agent.graph.graph --draw                    # 그래프 구조를 Mermaid로 출력
 
 # 중단된 질의를 재개할 수 있는 체크포인트 모드
-python -m agent.graph "..." --checkpoint sqlite:///agent_checkpoints.db --thread-id user-42
+python -m services.agent.graph.graph "..." --checkpoint sqlite:///agent_checkpoints.db --thread-id user-42
 ```
 
 `ANTHROPIC_API_KEY`가 있으면 LLM으로 엔티티를 추출하고, 없으면 규칙 기반으로

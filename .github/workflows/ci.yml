@@ -51,7 +51,7 @@ jobs:
 
       - name: 에이전트 그래프 컴파일 확인
         # 노드/엣지 연결이 깨지면 여기서 먼저 걸린다.
-        run: python -m agent.graph --draw
+        run: python -m services.agent.graph.graph --draw
 
       - name: MLflow 이관 dry-run
         # 새 실험 결과가 results/에 추가됐을 때 phase 추론이나 필드 분류가
@@ -80,11 +80,11 @@ jobs:
           pip install ruff
           # 신규 코드(Phase 5)만 검사한다. 기존 학습 스크립트는 스타일이
           # 다르고 지금 고칠 대상이 아니다.
-          ruff check agent/ mlops/ selftest/ ralph/ n8n/ tests/ web_pipeline/backend.py
+          ruff check services/ mlops/ selftest/ ralph/ n8n/ tests/ web_pipeline/backend.py
 
       - name: 전체 구문 검사
         # 학습 스크립트까지 포함해 import 가능한 상태인지만 본다.
-        run: python -m compileall -q agent mlops selftest ralph n8n tests scripts web_pipeline
+        run: python -m compileall -q services mlops selftest ralph n8n tests scripts web_pipeline
 
   containers:
     name: 컨테이너 · 매니페스트 검증

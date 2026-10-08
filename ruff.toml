@@ -1,6 +1,6 @@
-# Ruff 설정 — Phase 5 신규 코드(agent/, mlops/, tests/, web_pipeline/backend.py)에 적용.
+# Ruff 설정 — Phase 5 신규 코드(services/agent/graph/, mlops/, tests/, web_pipeline/backend.py)에 적용.
 #
-# 대상: agent/, mlops/, selftest/, ralph/, n8n/, tests/, web_pipeline/backend.py
+# 대상: services/, mlops/, selftest/, ralph/, n8n/, tests/, web_pipeline/backend.py
 # 기존 학습 스크립트(scripts/, tools/, train_dti_saprot.py)는 대상에서 뺐다.
 # 스타일이 다르고(정렬된 대입, 긴 표 형식 출력) 지금 손댈 이유가 없다.
 # CI의 lint 잡도 같은 범위만 검사한다.
@@ -46,4 +46,4 @@ ignore = [
 "selftest/build_golden_set.py" = ["E402"]
 
 [lint.isort]
-known-first-party = ["agent", "mlops", "tools", "web_pipeline"]
+known-first-party = ["services", "mlops", "tools", "web_pipeline"]

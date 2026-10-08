@@ -54,7 +54,9 @@ WORKDIR /app
 # 코드만 복사한다. results/, cache/, data/ 는 .dockerignore로 제외되고
 # 런타임에 볼륨으로 들어온다.
 COPY tools/ ./tools/
-COPY agent/ ./agent/
+COPY services/__init__.py ./services/
+COPY services/agent/__init__.py ./services/agent/
+COPY services/agent/graph/ ./services/agent/graph/
 COPY mlops/ ./mlops/
 COPY scripts/ ./scripts/
 COPY web_pipeline/ ./web_pipeline/

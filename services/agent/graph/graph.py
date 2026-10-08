@@ -41,7 +41,7 @@ DTI 질의의 제어 흐름은 사실 정해져 있다: 이름 해석 → 범위
            predict ─────────────────────────────────→ compose → END
 
 사용:
-    from agent.graph import build_graph, run_query
+    from services.agent.graph.graph import build_graph, run_query
 
     print(run_query("Does Imatinib bind to BCR-ABL?"))
 
@@ -56,8 +56,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from agent import nodes
-from agent.state import DTIState, new_state
+from services.agent.graph import nodes
+from services.agent.graph.state import DTIState, new_state
 
 log = logging.getLogger("agent.graph")
 

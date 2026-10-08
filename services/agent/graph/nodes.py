@@ -20,7 +20,7 @@ import logging
 import re
 from typing import Any
 
-from agent.state import DTIState
+from services.agent.graph.state import DTIState
 
 log = logging.getLogger("agent")
 
@@ -60,7 +60,7 @@ def parse_query(state: DTIState) -> dict[str, Any]:
     if not query:
         return {"error": "빈 질의입니다.", "stage": "failed", "trace": ["parse:empty"]}
 
-    from agent.llm import extract_entities
+    from services.agent.graph.llm import extract_entities
 
     drug, protein, how = extract_entities(query)
     if not drug or not protein:

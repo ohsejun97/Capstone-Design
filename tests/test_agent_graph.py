@@ -13,12 +13,12 @@ from __future__ import annotations
 
 import pytest
 
-from agent.state import new_state
+from services.agent.graph.state import new_state
 from tests.conftest import HMGCR, PREDICTION_OK
 
 
 def run(query: str, **kwargs):
-    from agent.graph import build_graph
+    from services.agent.graph.graph import build_graph
     return build_graph().invoke(new_state(query), **kwargs)
 
 
@@ -180,7 +180,7 @@ def test_unparseable_query_calls_no_tools(tools):
     ("Does Imatinib bind to BCR-ABL?", "Imatinib", "BCR-ABL"),
 ])
 def test_rule_based_entity_extraction(query, drug, protein):
-    from agent.llm import _extract_with_rules
+    from services.agent.graph.llm import _extract_with_rules
 
     got_drug, got_protein = _extract_with_rules(query)
     # 추출은 표면형을 그대로 돌려준다 — 표준명 치환은 refine_* 노드의 몫이다.
@@ -192,7 +192,7 @@ def test_rule_based_entity_extraction(query, drug, protein):
 
 def test_checkpointer_persists_state(tools):
     """같은 thread_id로 재호출하면 이전 상태가 남아 있어야 한다."""
-    from agent.graph import build_graph
+    from services.agent.graph.graph import build_graph
 
     app = build_graph(checkpoint="memory")
     config = {"configurable": {"thread_id": "t1"}}

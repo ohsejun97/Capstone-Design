@@ -19,7 +19,7 @@ langgraph>=1.2.0
 langgraph-checkpoint-sqlite>=3.1.0   # 중단된 질의 재개용 체크포인터
 
 # ── LLM 엔티티 추출 (선택) ────────────────────────────
-# 없으면 agent/llm.py가 규칙 기반 경로로 자동 폴백한다.
+# 없으면 services/agent/graph/llm.py가 규칙 기반 경로로 자동 폴백한다.
 anthropic>=0.40.0
 
 # ── MLflow Postgres 백엔드 (docker-compose 구성) ──────
