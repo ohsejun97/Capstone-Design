@@ -1,0 +1,79 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# Dockerfile.api — FusionDTI 추론 API (GPU)
+#
+# 멀티스테이지로 나눈 이유: 최종 이미지에 빌드 도구(gcc, git)를 남기지 않기
+# 위해서다. SaProt-650M FP16 + ft-ChemBERTa는 로드만 해도 수 GB라, 이미지에
+# 불필요한 층을 얹으면 pull 시간이 그대로 늘어난다.
+#
+# 모델 가중치는 이미지에 굽지 않는다:
+#   · results/**/*.pt 는 수백 MB — 재빌드마다 레이어가 통째로 무효화된다
+#   · HuggingFace 캐시(SaProt 2.6GB)는 더 크다
+#   → 둘 다 볼륨으로 마운트한다 (docker-compose.yml 참조)
+#
+# 빌드:
+#   docker build -f docker/Dockerfile.api -t fusiondti-api .
+# 실행 (GPU):
+#   docker run --gpus all -p 8000:8000 \
+#     -v $PWD/results:/app/results:ro -v hf-cache:/root/.cache/huggingface \
+#     fusiondti-api
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── 빌드 스테이지 ─────────────────────────────────────────────────────────────
+FROM python:3.10-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential git \
+    && rm -rf /var/lib/apt/lists/*
+
+# wheel을 별도 디렉토리에 모아 런타임 스테이지로 복사한다.
+WORKDIR /wheels
+COPY requirements.txt requirements-mlops.txt ./
+
+# torch는 CUDA 빌드를 명시적으로 받는다. 기본 PyPI wheel은 CUDA 12.x 번들이라
+# 용량이 크지만, cu121 인덱스를 쓰면 호스트 드라이버와 맞추기 쉽다.
+RUN pip wheel --no-cache-dir --wheel-dir /wheels \
+        --extra-index-url https://download.pytorch.org/whl/cu121 \
+        -r requirements.txt -r requirements-mlops.txt
+
+
+# ── 런타임 스테이지 ───────────────────────────────────────────────────────────
+FROM python:3.10-slim
+
+# libgomp: RDKit / PyTorch 런타임 의존성. curl: healthcheck.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgomp1 libxrender1 libxext6 curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /wheels /wheels
+RUN pip install --no-cache-dir --no-index --find-links=/wheels \
+        /wheels/*.whl \
+    && rm -rf /wheels
+
+WORKDIR /app
+
+# 코드만 복사한다. results/, cache/, data/ 는 .dockerignore로 제외되고
+# 런타임에 볼륨으로 들어온다.
+COPY tools/ ./tools/
+COPY agent/ ./agent/
+COPY mlops/ ./mlops/
+COPY scripts/ ./scripts/
+COPY web_pipeline/ ./web_pipeline/
+
+# 루트로 돌리지 않는다. 마운트된 results/ 는 읽기 전용이므로 소유권 변경 불필요.
+RUN useradd --create-home --uid 1000 fusiondti \
+    && mkdir -p /app/cache && chown -R fusiondti:fusiondti /app/cache
+USER fusiondti
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
+    HF_HOME=/home/fusiondti/.cache/huggingface
+
+EXPOSE 8000
+
+# 모델 로딩에 수십 초 걸린다 → start-period를 넉넉히 준다.
+# /health는 _models_loaded 상태를 돌려주므로 로딩 완료 시점을 정확히 잡는다.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=180s --retries=3 \
+    CMD curl -fsS http://localhost:8000/health || exit 1
+
+CMD ["uvicorn", "web_pipeline.api:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -15,7 +15,7 @@ Instead of requiring expert knowledge (UniProt IDs, SMILES strings, database que
               │
               ▼
      ┌─────────────────────┐
-     │  Agent (LLM)        │  ← smolagents orchestration
+     │  Agent (LangGraph)  │  ← 상태 그래프 + 조건부 재시도
      └──┬──────────────┬───┘
         │              │
         ▼              ▼
@@ -57,8 +57,10 @@ Instead of requiring expert knowledge (UniProt IDs, SMILES strings, database que
 | ↳ 1h | **ChemBERTa Fine-tuning** — layers 4~5 unfreeze, BindingDB r=**0.8923** (+0.0186 vs frozen) | ✅ Complete |
 | ↳ 1i | **ft ChemBERTa Transfer** — DAVIS r=**0.8677** (+0.051), KIBA r=**0.8594** (+0.043) | ✅ Complete |
 | Phase 2 | **Agent Tools** (Tool 1–5 implementation) | ✅ Complete |
-| Phase 3 | **Agent Orchestration** — smolagents ReAct | ⏳ Next |
-| Phase 4 | **End-to-End Demo** | ⏳ Planned |
+| Phase 3 | **Agent Orchestration** — LangGraph 상태 그래프 (재시도·OOD 분기·체크포인팅) | ✅ Complete |
+| Phase 4 | **End-to-End Demo** — FastAPI + Streamlit | ✅ Complete |
+| Phase 5 | **MLOps** — MLflow 실험 추적, Docker/k3s, CI | ✅ Complete |
+| Phase 6 | **자동화** — SelfTest Agent, n8n 워크플로, Ralph Loop | ✅ Complete |
 
 **Best DTI model (현재):** SaProt-650M FP16 + 3Di + ChemBERTa ft Transfer — DAVIS r=**0.8677**, KIBA r=**0.8594** (4GB VRAM, SOTA 대비 격차 0.02~0.04)
 (see [Training Report](docs/PHASE1_TRAINING_EXPERIMENTS.md) | [ChemBERTa Fine-tuning](docs/PHASE1H_CHEMBERTA_UNFREEZE.md) | [ft Transfer](docs/PHASE1I_TRANSFER_FT.md))
@@ -101,6 +103,56 @@ python tools/rdkit_tool.py "CC(=O)Oc1ccccc1C(=O)O"         # Ligand 3D (Aspirin)
 # ── 3Di 토큰 캐시 빌드 (prerequisite) ──
 python scripts/build_3di_cache.py --dataset bindingdb --resume
 ```
+
+### Phase 3 — 에이전트 (LangGraph)
+
+```bash
+python -m agent.graph "Does Imatinib bind to BCR-ABL?" --verbose
+python -m agent.graph --draw                    # 그래프 구조를 Mermaid로 출력
+
+# 중단된 질의를 재개할 수 있는 체크포인트 모드
+python -m agent.graph "..." --checkpoint sqlite:///agent_checkpoints.db --thread-id user-42
+```
+
+`ANTHROPIC_API_KEY`가 있으면 LLM으로 엔티티를 추출하고, 없으면 규칙 기반으로
+폴백한다 — 키 없이도 전체 파이프라인이 돈다.
+
+### Phase 5 — MLOps
+
+```bash
+pip install -r requirements-mlops.txt    # 학습 스택과 분리 (torch/rdkit 불필요)
+
+# 과거 실험 28개를 MLflow로 이관 (멱등 — 몇 번 돌려도 중복 안 생김)
+python -m mlops.backfill --dry-run
+python -m mlops.backfill
+mlflow ui --backend-store-uri sqlite:///mlflow.db     # → localhost:5000
+
+# 테스트
+pytest tests/ -v                                      # 118 passed
+
+# 컨테이너
+docker compose up -d postgres mlflow                  # 추적만 (GPU 불필요)
+docker compose --profile serving up -d                # 추론 스택까지
+```
+
+### Phase 6 — 자동화 (SelfTest · n8n · Ralph)
+
+```bash
+# ── SelfTest: 회귀·드리프트 점검 ──
+python -m selftest.runner --record-baseline    # 최초 1회 — 기준선 스냅샷
+python -m selftest.runner                      # 이후 — 점검 (종료코드 1 = 회귀)
+
+# ── Ralph Loop: 예산 제한 하이퍼파라미터 탐색 ──
+python -m ralph.loop --dry-run                 # 무엇을 돌릴지만 출력
+python -m ralph.loop --max-iters 8 --target 0.90
+
+# ── n8n 워크플로 ──
+python -m n8n.build_workflows                  # JSON 재생성
+docker compose --profile serving --profile automation up -d   # → localhost:5678
+```
+
+**기준선 기록이 먼저다.** 없으면 drift 검사가 매번 `SKIP`이라 아무것도 잡지
+못한다. `selftest/baseline.json`은 모델 자신의 출력 스냅샷이지 문헌값이 아니다.
 
 ---
 
@@ -161,10 +213,18 @@ sa_seq = "".join(aa + "#" for aa in aa_seq)
 | Drug encoder | ChemBERTa-zinc-base (layers 4~5 fine-tuned on BindingDB, 768-dim) |
 | Structural tokens | FoldSeek 3Di via AlphaFold DB PDB |
 | DTI head | PyTorch MLP (~1.5M params), BindingDB → DAVIS/KIBA transfer |
-| Agent framework | smolagents (Hugging Face, ReAct) |
+| Agent framework | LangGraph (상태 그래프, 조건부 재시도, SQLite 체크포인터) |
+| Entity extraction | Claude (선택) — 없으면 규칙 기반으로 자동 폴백 |
 | Protein structure | AlphaFold DB (EBI REST API) |
 | Ligand structure | RDKit ETKDGv3 + MMFF94 force field |
 | Name resolution | PubChem API + UniProt Search API |
+| Experiment tracking | MLflow 3.x (SQLite 로컬 / Postgres 컨테이너) |
+| Serving | FastAPI (GPU) + Streamlit (CPU), 이미지 분리 |
+| Orchestration | Docker Compose · Kubernetes 매니페스트 (작성 완료, 정적 검증) |
+| Automation | n8n (스케줄·배치·알림) — LangGraph와 **층이 다르다** |
+| Regression guard | SelfTest Agent — 골든셋 30쌍, 드리프트·순위·계약 검사 |
+| Experiment loop | Ralph Loop — 예산 제한 자율 하이퍼파라미터 탐색 |
+| CI | GitHub Actions — pytest 118개, ruff, hadolint, kubeconform |
 | Hardware | GTX 1650 SUPER (4GB VRAM), WSL2, Python 3.10 |
 
 ---
@@ -342,8 +402,10 @@ The LLM orchestrator must translate non-English drug names (e.g., "비아그라"
 | **Phase 1h** | **ChemBERTa fine-tune (layers 4~5): BindingDB r=0.8923 — SOTA 수준** | **✅ Complete** |
 | **Phase 1i** | **ft ChemBERTa Transfer: DAVIS r=0.8677 (+0.051), KIBA r=0.8594 (+0.043)** | **✅ Complete** |
 | Phase 2 | Agent Tools 1–5 implementation | ✅ Complete |
-| Phase 3 | smolagents Agent orchestration | ⏳ Next |
-| Phase 4 | End-to-end demo | ⏳ Planned |
+| **Phase 3** | **LangGraph orchestration — 조건부 재시도, OOD 분기, 체크포인팅** | **✅ Complete** |
+| Phase 4 | End-to-end demo — FastAPI 백엔드 + Streamlit UI | ✅ Complete |
+| **Phase 5** | **MLOps — MLflow 이관(28개 실험), Docker/k3s, CI** | **✅ Complete** |
+| **Phase 6** | **자동화 — SelfTest Agent(회귀·드리프트), n8n 워크플로 4개, Ralph Loop** | **✅ Complete** |
 
 ---
 
@@ -359,4 +421,9 @@ The LLM orchestrator must translate non-English drug names (e.g., "비아그라"
 | [Evaluation Framework](docs/EVALUATION_FRAMEWORK.md) | 지표 정의(Pearson r / RMSE / CI), 비교 분석 프레임워크 |
 | [Phase 1 Pipeline Design](docs/PHASE1_REFERENCE_PIPELINE.md) | Architecture rationale, why frozen encoder + MLP |
 | [Phase 1 Experiment Log](docs/PHASE1_EXPERIMENT_LOG.md) | V1→V3 초기 실패 히스토리 |
+| [Phase 5 MLOps](docs/PHASE5_MLOPS.md) | 실험 추적·에이전트 그래프·컨테이너화 설계와 검증 로그 |
+| [Kubernetes 배포](k8s/README.md) | k3s 매니페스트, GPU 스케줄링 제약, 알려진 한계 |
+| [Phase 6 자동화](docs/PHASE6_AUTOMATION.md) | SelfTest·n8n·Ralph Loop 설계 근거와 검증 로그 |
+| [n8n 워크플로](n8n/README.md) | 왜 질의 경로에 n8n을 쓰지 않았는지, 워크플로 4개 |
+| [기술 스택 ↔ 직무 매핑](docs/SKILLS_MAP.md) | 무엇을 주장할 수 있고 무엇은 아직 아닌지, 근거와 함께 |
 | [Poster Brief](POSTER_BRIEF.md) | 학술 포스터 제작 지시서 (AI 프롬프트 포함) |

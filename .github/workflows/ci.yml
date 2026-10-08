@@ -1,0 +1,139 @@
+name: CI
+
+# GPU도 네트워크도 쓰지 않는 검증만 돌린다. 학습·추론은 CI 대상이 아니다
+# (SaProt-650M 로딩만 수 GB · 수 분). 대신 그 위 계층을 전부 검증한다:
+#   · 에이전트 그래프 제어 흐름 (도구 목킹)
+#   · UI ↔ API 백엔드 계약 (스텁 HTTP 서버)
+#   · MLflow 이관 로직 (실제 results/ 28개로 dry-run)
+#   · SelfTest 검사 로직 (고장 주입)
+#   · Ralph Loop 정지 조건
+#   · n8n 워크플로 구조 + Code 노드 JS 구문
+#   · 컨테이너·매니페스트 정적 검증
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # 같은 브랜치에 연속 푸시하면 이전 실행을 취소한다.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: 테스트 (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.10은 프로젝트 하한(requirements.txt), 3.12는 상한 확인용.
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: 의존성 설치
+        # requirements.txt(torch/rdkit)는 설치하지 않는다 — 테스트가 도구를
+        # 목킹하므로 불필요하고, torch 설치만 몇 분이 걸린다.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-mlops.txt
+
+      - name: pytest
+        run: pytest tests/ -v --tb=short
+
+      - name: 에이전트 그래프 컴파일 확인
+        # 노드/엣지 연결이 깨지면 여기서 먼저 걸린다.
+        run: python -m agent.graph --draw
+
+      - name: MLflow 이관 dry-run
+        # 새 실험 결과가 results/에 추가됐을 때 phase 추론이나 필드 분류가
+        # 깨지지 않는지 실제 데이터로 확인한다.
+        run: python -m mlops.backfill --dry-run
+
+      - name: n8n 워크플로 JSON 최신 여부
+        # build_workflows.py를 고치고 재생성을 잊는 경우를 잡는다.
+        run: python -m n8n.build_workflows --check
+
+      - name: Ralph Loop dry-run
+        # 정지 조건이 새면 GPU 시간이 조용히 증발한다. 명령 조립까지만 확인.
+        run: python -m ralph.loop --dry-run --max-iters 3
+
+  lint:
+    name: 정적 검사
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: ruff
+        run: |
+          pip install ruff
+          # 신규 코드(Phase 5)만 검사한다. 기존 학습 스크립트는 스타일이
+          # 다르고 지금 고칠 대상이 아니다.
+          ruff check agent/ mlops/ selftest/ ralph/ n8n/ tests/ web_pipeline/backend.py
+
+      - name: 전체 구문 검사
+        # 학습 스크립트까지 포함해 import 가능한 상태인지만 본다.
+        run: python -m compileall -q agent mlops selftest ralph n8n tests scripts web_pipeline
+
+  containers:
+    name: 컨테이너 · 매니페스트 검증
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: docker compose 설정 검증
+        # 변수 치환·스키마 오류를 빌드 전에 잡는다.
+        run: docker compose config --quiet
+
+      - name: Dockerfile 린트 (hadolint)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: docker/Dockerfile.api
+          # DL3008(apt 버전 고정)은 slim 베이스에서 현실적으로 지키기 어렵다.
+          ignore: DL3008,DL3013
+
+      - name: Dockerfile 린트 (UI)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: docker/Dockerfile.ui
+          ignore: DL3008,DL3013
+
+      - name: Kubernetes 매니페스트 검증
+        # 실제 클러스터 없이 스키마를 검사한다.
+        run: |
+          curl -sSLo kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar xzf kubeconform.tar.gz kubeconform
+          cp k8s/secret.yaml.example /tmp/secret.yaml
+          ./kubeconform -strict -summary -ignore-missing-schemas k8s/*.yaml /tmp/secret.yaml
+
+  build:
+    name: 이미지 빌드 (UI만)
+    runs-on: ubuntu-latest
+    needs: [test, containers]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: UI 이미지 빌드
+        # API 이미지는 CI에서 빌드하지 않는다 — torch CUDA wheel이 2GB 넘고
+        # GitHub 호스티드 러너 디스크(14GB)를 넘기기 쉽다. GPU 머신에서 빌드한다.
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.ui
+          push: false
+          tags: fusiondti-ui:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

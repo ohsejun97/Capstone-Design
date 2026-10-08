@@ -1,0 +1,27 @@
+# k3s 기본 Ingress 컨트롤러는 Traefik이다.
+# TLS 없이 HTTP로만 노출 — 로컬 검증 목적.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fusiondti
+  namespace: fusiondti
+spec:
+  rules:
+    - host: fusiondti.localhost
+      http:
+        paths:
+          # /api 로 들어온 요청은 FastAPI로. 나머지는 Streamlit으로.
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: fusiondti-api
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: fusiondti-ui
+                port:
+                  number: 8501

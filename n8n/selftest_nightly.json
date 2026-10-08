@@ -1,0 +1,192 @@
+{
+  "name": "FusionDTI — Nightly SelfTest",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 2 * * *"
+            }
+          ]
+        }
+      },
+      "id": "nightly-02:00",
+      "name": "Nightly 02:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://api:8000/selftest",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "skip_contracts",
+              "value": "false"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 900000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "run-selftest",
+      "name": "Run SelfTest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const res = $input.first().json;\nconst report = res.body || {};\n\n// API가 리포트를 못 낸 것도 장애다 — 조용히 통과시키면 감시가 죽은 줄 모른다.\nif (res.statusCode !== 200 || !Array.isArray(report.checks)) {\n  return [{ json: {\n    status: 'FAIL',\n    n_failed_checks: -1,\n    failed_checks: ['selftest_endpoint_error'],\n    summary: `SelfTest 엔드포인트 오류 (HTTP ${res.statusCode}): `\n             + String(report.detail || JSON.stringify(report)).slice(0, 400),\n  }}];\n}\n\nconst failed = report.checks.filter(c => c.status === 'FAIL');\nreport.summary = failed.map(c => `• ${c.name}: ${c.summary}`).join('\\n')\n                 || '모든 검사 통과';\nreturn [{ json: report }];"
+      },
+      "id": "parse-report",
+      "name": "Parse Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "FAIL",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "regression?",
+      "name": "Regression?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: '🚨 FusionDTI SelfTest 회귀 감지\\n\\n' + $json.summary + '\\n\\n리포트: results/selftest/latest.json' }) }}",
+        "options": {}
+      },
+      "id": "alert-slack",
+      "name": "Alert Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        200
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "no-action",
+      "name": "No Action",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        900,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Nightly 02:00": {
+      "main": [
+        [
+          {
+            "node": "Run SelfTest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run SelfTest": {
+      "main": [
+        [
+          {
+            "node": "Parse Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Report": {
+      "main": [
+        [
+          {
+            "node": "Regression?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Regression?": {
+      "main": [
+        [
+          {
+            "node": "Alert Slack",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "description": "매일 02:00 골든셋 회귀·드리프트 점검. 실패 시에만 Slack 알림."
+  },
+  "tags": [
+    {
+      "name": "fusiondti"
+    }
+  ]
+}

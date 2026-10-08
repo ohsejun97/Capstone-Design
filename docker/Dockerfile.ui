@@ -1,0 +1,52 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# Dockerfile.ui — Streamlit 데모 (CPU 전용)
+#
+# API 이미지와 분리한 이유:
+#   · UI는 torch도 SaProt 가중치도 필요 없다 — 추론은 HTTP로 API에 맡긴다
+#     (web_pipeline/backend.py의 http 모드). 같은 이미지를 쓰면 CPU 컨테이너가
+#     3GB 넘는 GPU 스택을 지고 다닌다.
+#   · 스케일 축이 다르다. 모델 서버는 GPU 1대에 묶이지만 UI는 수평 확장된다
+#     (k8s/hpa.yaml이 UI에만 HPA를 다는 이유).
+#
+# rdkit은 UI에도 필요하다 — 분자 구조 그림(_smiles_to_png)을 UI가 직접 그린다.
+# CPU 전용 wheel이라 torch 대비 훨씬 가볍다(수십 MB).
+#
+# 빌드:
+#   docker build -f docker/Dockerfile.ui -t fusiondti-ui .
+# ══════════════════════════════════════════════════════════════════════════════
+
+FROM python:3.10-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# UI가 실제로 쓰는 것만 설치한다. requirements.txt 전체를 넣지 않는다.
+RUN pip install --no-cache-dir \
+        "streamlit>=1.28.0" \
+        "requests>=2.31.0" \
+        "pandas>=2.0.0" \
+        "plotly>=5.18.0" \
+        "pillow>=10.0.0" \
+        "rdkit>=2023.3.1"
+
+WORKDIR /app
+COPY web_pipeline/__init__.py web_pipeline/app.py web_pipeline/backend.py ./web_pipeline/
+
+RUN useradd --create-home --uid 1000 fusiondti
+USER fusiondti
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
+    FUSIONDTI_BACKEND=http \
+    FUSIONDTI_API_URL=http://api:8000 \
+    STREAMLIT_SERVER_HEADLESS=true \
+    STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+
+EXPOSE 8501
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS http://localhost:8501/_stcore/health || exit 1
+
+CMD ["streamlit", "run", "web_pipeline/app.py", \
+     "--server.address=0.0.0.0", "--server.port=8501"]

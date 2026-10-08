@@ -1,0 +1,56 @@
+# Streamlit UI — CPU 전용. API와 달리 수평 확장된다 (hpa.yaml).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fusiondti-ui
+  namespace: fusiondti
+  labels:
+    app: fusiondti-ui
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: fusiondti-ui
+  template:
+    metadata:
+      labels:
+        app: fusiondti-ui
+    spec:
+      containers:
+        - name: ui
+          image: fusiondti-ui:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8501
+              name: http
+          envFrom:
+            - configMapRef:
+                name: fusiondti-config
+          resources:
+            # HPA가 동작하려면 requests.cpu가 반드시 있어야 한다
+            # (사용률 = 실제 사용량 / requests).
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          readinessProbe:
+            httpGet: { path: /_stcore/health, port: 8501 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /_stcore/health, port: 8501 }
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fusiondti-ui
+  namespace: fusiondti
+spec:
+  selector:
+    app: fusiondti-ui
+  ports:
+    - port: 8501
+      targetPort: 8501
+      name: http

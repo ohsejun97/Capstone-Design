@@ -1,0 +1,121 @@
+{
+  "name": "FusionDTI — Webhook Query",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "fusiondti/ask",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://api:8000/agent/ask",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: $json.body.query || '' }) }}",
+        "options": {
+          "timeout": 180000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "run-agent",
+      "name": "Run Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const res = $input.first().json;\nconst body = res.body || {};\n\nif (res.statusCode !== 200) {\n  return [{ json: {\n    ok: false,\n    answer: `요청을 처리하지 못했습니다 (HTTP ${res.statusCode}).`,\n    detail: String(body.detail || '').slice(0, 300),\n  }}];\n}\n\nreturn [{ json: {\n  ok: Boolean(body.ok),\n  answer: body.answer || '에이전트가 응답을 내지 못했습니다.',\n  pKd: body.prediction ? body.prediction.pKd : null,\n  warnings: body.warnings || [],\n}}];"
+      },
+      "id": "format-answer",
+      "name": "Format Answer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Run Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Agent": {
+      "main": [
+        [
+          {
+            "node": "Format Answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Answer": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "description": "POST /webhook/fusiondti/ask 로 자연어 질의 → API /agent/ask → JSON 응답."
+  },
+  "tags": [
+    {
+      "name": "fusiondti"
+    }
+  ]
+}
