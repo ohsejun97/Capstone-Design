@@ -466,4 +466,4 @@ Phase 1h fine-tuned ChemBERTa로 DAVIS/KIBA drug embedding 재계산 후 head fi
 
 ### Phase 3 — Agent 오케스트레이션 (⏳ Next)
 
-Phase 1 완료(1a~1i). 최종 DTI 모델(ft ChemBERTa Transfer)을 Tool 1에 통합하고 smolagents ReAct 오케스트레이션 구현.
+Phase 1 완료(1a~1i). 최종 DTI 모델(ft ChemBERTa Transfer)을 Tool 1에 통합하고 LangGraph 상태 그래프로 오케스트레이션 구현(`agent/graph.py`).
