@@ -60,7 +60,7 @@
 
 ## D-008. 저장소 재배치 원칙
 
-- **결정**: `services/web`, `services/agent`, `deploy/`, `evals/`, `research/` 구조로 옮긴다.
+- **결정**: `services/web`, `services/agent`, `deploy/`, `evals/`, `research/` 구조로 옮긴다. (`research/` 이동은 D-011에 따라 보류)
   - 이동은 `git mv`로 하고 기능 변경과 섞지 않은 단독 커밋으로 한다. 커밋마다 기존 테스트와 CI 통과를 확인한다.
   - `research/`(Phase 1 학습 실험 자산)는 읽기 전용으로 두고 내부 스크립트 경로는 수정하지 않는다.
 - **이유**: 이동과 수정이 한 커밋에 섞이면 리뷰와 되돌리기가 어렵다. 실험 자산은 재현성이 생명이라 경로를 건드리지 않는다.
@@ -77,3 +77,9 @@
 - **결정**: Phase 1(10월)은 Tier 1(Django, FastAPI, PostgreSQL, Compose, EC2, Nginx, GitHub Actions)만 다룬다. 기존 MLflow는 Compose 선택 프로필로 뺀다. Tier 2(RAG, Celery, 트레이싱, MCP)는 Tier 1이 안정된 뒤에만 한다.
 - **이유**: 1인 개발로 일정이 제한돼 있어, 이미 만들어 둔 것을 전부 살리려 하면 Tier 1이 늦어진다.
 - **상태**: 확정 (2026-10-08)
+
+## D-011. research/ 이동은 Phase 1에서 하지 않음
+
+- **결정**: Phase 1 학습 실험 자산(`train_dti_saprot.py`, `scripts/`, `results/` 등)을 `research/`로 옮기는 작업은 Phase 1 범위에서 뺀다. `data/`도 그대로 둔다. Phase 3에서 다시 검토한다.
+- **이유**: `Dockerfile.api`가 `scripts/`와 `mlops/`를 COPY하고 있어서 옮기면 경로가 연쇄적으로 깨진다. 얻는 것은 폴더 이름 정리 정도라, 같은 시간을 Django 뼈대에 쓰는 편이 낫다.
+- **상태**: 보류 (2026-10-09, Phase 3에서 재검토)
