@@ -1,5 +1,7 @@
 # Bio-AI Agent System for Drug–Target Interaction Analysis
 
+> **안내**: 이 저장소는 DTI 모델·실험 자산 저장소다. 이후 작업(LangGraph 에이전트, MLflow, Docker Compose, GitHub Actions CI, n8n)은 `phase1/skeleton` 브랜치에 있고, 에이전트 본체는 2026-10부터 별도 저장소 agent-platform으로 옮겼다.
+
 > Capstone Design Project — Bio-AI pipeline that answers natural language queries about drug-target interactions using a frozen protein language model, structural databases, and LLM orchestration.
 
 ---
@@ -57,8 +59,8 @@ Instead of requiring expert knowledge (UniProt IDs, SMILES strings, database que
 | ↳ 1h | **ChemBERTa Fine-tuning** — layers 4~5 unfreeze, BindingDB r=**0.8923** (+0.0186 vs frozen) | ✅ Complete |
 | ↳ 1i | **ft ChemBERTa Transfer** — DAVIS r=**0.8677** (+0.051), KIBA r=**0.8594** (+0.043) | ✅ Complete |
 | Phase 2 | **Agent Tools** (Tool 1–5 implementation) | ✅ Complete |
-| Phase 3 | **Agent Orchestration** — smolagents ReAct | ⏳ Next |
-| Phase 4 | **End-to-End Demo** | ⏳ Planned |
+| Phase 3 | **Agent Orchestration** — LangGraph 상태 그래프 (`phase1/skeleton` 브랜치) | ✅ Complete |
+| Phase 4 | **End-to-End Demo** — FastAPI + Streamlit (`web_pipeline/`) | ✅ Complete |
 
 **Best DTI model (현재):** SaProt-650M FP16 + 3Di + ChemBERTa ft Transfer — DAVIS r=**0.8677**, KIBA r=**0.8594** (4GB VRAM, SOTA 대비 격차 0.02~0.04)
 (see [Training Report](docs/PHASE1_TRAINING_EXPERIMENTS.md) | [ChemBERTa Fine-tuning](docs/PHASE1H_CHEMBERTA_UNFREEZE.md) | [ft Transfer](docs/PHASE1I_TRANSFER_FT.md))
@@ -342,8 +344,8 @@ The LLM orchestrator must translate non-English drug names (e.g., "비아그라"
 | **Phase 1h** | **ChemBERTa fine-tune (layers 4~5): BindingDB r=0.8923 — SOTA 수준** | **✅ Complete** |
 | **Phase 1i** | **ft ChemBERTa Transfer: DAVIS r=0.8677 (+0.051), KIBA r=0.8594 (+0.043)** | **✅ Complete** |
 | Phase 2 | Agent Tools 1–5 implementation | ✅ Complete |
-| Phase 3 | smolagents Agent orchestration | ⏳ Next |
-| Phase 4 | End-to-end demo | ⏳ Planned |
+| Phase 3 | LangGraph Agent orchestration (`phase1/skeleton` 브랜치) | ✅ Complete |
+| Phase 4 | End-to-end demo — FastAPI + Streamlit (`web_pipeline/`) | ✅ Complete |
 
 ---
 
