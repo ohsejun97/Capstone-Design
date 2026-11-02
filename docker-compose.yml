@@ -1,0 +1,140 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# docker-compose.yml — FusionDTI 로컬 운영 구성
+#
+#   postgres  : MLflow 백엔드 스토어 (실험 메타데이터)
+#   mlflow    : 실험 추적 UI + REST  → http://localhost:5000
+#   api       : FastAPI 추론 서버 (GPU) → http://localhost:8000/docs
+#   ui        : Streamlit 데모 (CPU)    → http://localhost:8501
+#   n8n       : 워크플로 자동화 (야간 SelfTest, 배치 스크리닝) → http://localhost:5678
+#
+# 층이 두 개다: n8n은 **스케줄·배치·알림**(초~분 단위)을 맡고, 질의 한 건의
+# 제어 흐름(밀리초 단위)은 LangGraph가 맡는다. n8n에 로직을 넣지 않는다 —
+# 워크플로 JSON은 테스트도 리뷰도 어렵기 때문이다. 자세한 것은 n8n/README.md.
+#
+# 실행:
+#   docker compose up -d postgres mlflow     # 추적만 먼저 (GPU 불필요)
+#   docker compose --profile serving up -d   # 추론 스택까지
+#   docker compose --profile automation up -d  # + n8n
+#
+# 과거 실험 이관:
+#   MLFLOW_TRACKING_URI=http://localhost:5000 python -m mlops.backfill
+#
+# GPU 요구사항: nvidia-container-toolkit 설치 필요.
+#   WSL2에서는 Docker Desktop의 WSL 통합 + 호스트 NVIDIA 드라이버로 충분하다.
+#   GPU 없이 UI/추적만 보려면 `--profile serving`을 빼고 올리면 된다.
+# ══════════════════════════════════════════════════════════════════════════════
+
+services:
+
+  # ── 실험 메타데이터 저장소 ──────────────────────────────────────────────────
+  # SQLite로도 되지만 Postgres를 쓰는 이유: MLflow의 동시 쓰기.
+  # 학습 스크립트와 백필이 같이 돌면 SQLite는 'database is locked'로 죽는다.
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mlflow}
+      POSTGRES_DB: mlflow
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # mlflow 컨테이너가 DB 준비 전에 마이그레이션을 돌면 실패한다.
+      test: ["CMD-SHELL", "pg_isready -U mlflow -d mlflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # ── 실험 추적 서버 ──────────────────────────────────────────────────────────
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.16.1
+    command: >
+      sh -c "pip install --no-cache-dir psycopg2-binary &&
+             mlflow server
+               --host 0.0.0.0 --port 5000
+               --backend-store-uri postgresql://mlflow:${POSTGRES_PASSWORD:-mlflow}@postgres/mlflow
+               --default-artifact-root /mlartifacts"
+    ports:
+      - "5000:5000"
+    volumes:
+      # 아티팩트는 서버 컨테이너의 로컬 디스크에 둔다. 운영이라면 S3/MinIO로
+      # 바꾼다 (--default-artifact-root s3://...).
+      - mlartifacts:/mlartifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── 추론 API (GPU) ──────────────────────────────────────────────────────────
+  api:
+    profiles: ["serving"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    image: fusiondti-api:latest
+    ports:
+      - "8000:8000"
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      # transformers가 컨테이너 안에서 매번 모델을 다시 받지 않도록.
+      HF_HOME: /home/fusiondti/.cache/huggingface
+    volumes:
+      # 모델 가중치와 캐시는 이미지에 굽지 않고 마운트한다 (Dockerfile.api 주석 참조).
+      - ./results:/app/results:ro
+      - ./cache:/app/cache
+      - hf-cache:/home/fusiondti/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  # ── Streamlit 데모 (CPU) ────────────────────────────────────────────────────
+  ui:
+    profiles: ["serving"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ui
+    image: fusiondti-ui:latest
+    ports:
+      - "8501:8501"
+    environment:
+      FUSIONDTI_BACKEND: http
+      FUSIONDTI_API_URL: http://api:8000
+    depends_on:
+      api:
+        # 모델 로딩이 끝나야(healthcheck 통과) UI가 의미 있는 화면을 띄운다.
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── 워크플로 자동화 ─────────────────────────────────────────────────────────
+  # n8n은 API와 **HTTP로만** 통신한다. 프로젝트 코드를 마운트하지 않는 이유:
+  # n8n 이미지에는 Python도 torch도 없어서 스크립트를 직접 돌릴 수 없고,
+  # 모델을 가진 쪽(api)이 /selftest, /agent/ask 를 노출하는 것이 맞다.
+  # 덕분에 n8n 이미지를 커스터마이즈할 필요가 없다.
+  n8n:
+    profiles: ["automation"]
+    image: n8nio/n8n:1.70.1
+    ports:
+      - "5678:5678"
+    environment:
+      GENERIC_TIMEZONE: Asia/Seoul
+      TZ: Asia/Seoul
+      # 워크플로의 Slack 노드가 참조한다. 비어 있으면 알림만 실패한다.
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_RUNNERS_ENABLED: "true"
+    volumes:
+      - n8ndata:/home/node/.n8n
+      # 워크플로 JSON — UI에서 Import from File로 불러온다.
+      - ./n8n:/workflows:ro
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  mlartifacts:
+  hf-cache:
+  n8ndata:

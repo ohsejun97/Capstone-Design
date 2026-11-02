@@ -1,0 +1,87 @@
+# 추론 API — GPU 파드.
+#
+# replicas는 1에 고정한다. 노드에 할당 가능한 nvidia.com/gpu가 1개뿐이라
+# 2로 올리면 두 번째 파드가 영영 Pending에 남는다 (deploy/k8s/README.md 참조).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fusiondti-api
+  namespace: fusiondti
+  labels:
+    app: fusiondti-api
+spec:
+  replicas: 1
+  strategy:
+    # GPU가 1장이라 RollingUpdate는 새 파드가 GPU를 못 잡아 교착된다.
+    # 짧은 다운타임을 받아들이고 기존 파드를 먼저 내린다.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: fusiondti-api
+  template:
+    metadata:
+      labels:
+        app: fusiondti-api
+    spec:
+      containers:
+        - name: api
+          image: fusiondti-api:latest
+          imagePullPolicy: IfNotPresent      # k3s ctr로 직접 import하므로
+          ports:
+            - containerPort: 8000
+              name: http
+          envFrom:
+            - configMapRef:
+                name: fusiondti-config
+            - secretRef:
+                name: fusiondti-secrets
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+              memory: "12Gi"
+            requests:
+              cpu: "1"
+              memory: "6Gi"
+              nvidia.com/gpu: 1
+          volumeMounts:
+            - name: models
+              mountPath: /app/results
+              readOnly: true
+            - name: hf-cache
+              mountPath: /cache/huggingface
+          # SaProt-650M + ft-ChemBERTa 로딩에 1~3분 걸린다.
+          # startupProbe가 통과할 때까지 liveness는 유예된다 — 이게 없으면
+          # 로딩 중인 파드를 kubelet이 계속 죽인다.
+          startupProbe:
+            httpGet: { path: /health, port: 8000 }
+            periodSeconds: 10
+            failureThreshold: 30          # 최대 300초 허용
+          readinessProbe:
+            # 준비 전에는 Service 엔드포인트에서 빠진다 → UI가 502를 안 본다.
+            httpGet: { path: /health, port: 8000 }
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            periodSeconds: 30
+            failureThreshold: 3
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: fusiondti-models
+        - name: hf-cache
+          persistentVolumeClaim:
+            claimName: fusiondti-hf-cache
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fusiondti-api
+  namespace: fusiondti
+spec:
+  selector:
+    app: fusiondti-api
+  ports:
+    - port: 8000
+      targetPort: 8000
+      name: http

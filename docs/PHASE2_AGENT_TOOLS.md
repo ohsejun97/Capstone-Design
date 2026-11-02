@@ -1,7 +1,11 @@
 # Phase 2 — Agent Tools 개발 일지
 
 > **작성일시:** 2026년 3월 27일 KST (최종 업데이트: 2026-03-30)
-> **목표:** DTI 예측 Agent의 5개 Tool 구현 및 smolagents 오케스트레이션
+> **목표:** DTI 예측 Agent의 5개 Tool 구현
+>
+> **후속 정정:** 오케스트레이션은 smolagents ReAct로 계획했으나 LangGraph
+> 상태 그래프로 구현했다. 아래 smolagents 관련 서술은 당시 계획 기록이며,
+> 실제 구현은 [Phase 5 문서 §3](PHASE5_MLOPS.md)과 `agent/graph.py`를 따른다.
 > **현재 상태:** ✅ Tool 1~5 구현 완료, Phase 4 (Agent 오케스트레이션) 진행 예정
 
 ---
@@ -11,7 +15,7 @@
 ```
 User Query (자연어)
       ↓
-Agent AI (smolagents + LLM)
+Agent AI (LangGraph + LLM)
       ↓
 ┌─────────────────────────────────┐
 │ Tool 4: Drug Name Resolver  🔄  │ ← 약물 이름 → SMILES (PubChem API)
@@ -180,7 +184,7 @@ Cache hit/miss 모두 확인 ✅
 | "리피토가 HMGCR에 결합해?" | ❌ | ✅ |
 
 ### Agent 오케스트레이션 (Phase 4 — 다음 단계)
-- Framework: smolagents (Hugging Face)
+- Framework: LangGraph (계획 당시 기록: smolagents)
 - LLM: 미정 (로컬 경량 모델 또는 API)
 - Tool 1~5 등록 → 자연어 쿼리 → Tool 선택 → 결과 종합
 - 목표: "Does Imatinib bind to ABL1?" 한 문장으로 pKd + 구조 정보 반환

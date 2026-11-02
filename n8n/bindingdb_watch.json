@@ -1,0 +1,207 @@
+{
+  "name": "FusionDTI — BindingDB Watch",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 3 * * 1"
+            }
+          ]
+        }
+      },
+      "id": "weekly-mon-03:00",
+      "name": "Weekly Mon 03:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.bindingdb.org/rwd/bind/chemsearch/marvin/Download.jsp",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "fetch-release-page",
+      "name": "Fetch Release Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 페이지에서 BindingDB_All_<YYYYmM>.tsv 형태의 릴리스 표기를 찾는다.\n// 파싱이 깨지면 조용히 통과시키지 않고 그 사실을 알린다 — 감시가 죽은 채로\n// '변화 없음'을 보고하는 게 가장 나쁜 실패다.\nconst html = String($input.first().json.data || $input.first().json.body || '');\nconst m = html.match(/BindingDB_All[_-]?(\\d{6,8}|\\d{4}m\\d{1,2})/i);\n\nif (!m) {\n  return [{ json: { parsed: false, version: null,\n                    note: '릴리스 표기를 찾지 못했습니다 — 페이지 구조가 바뀌었을 수 있습니다.' }}];\n}\nreturn [{ json: { parsed: true, version: m[1], note: '' } }];"
+      },
+      "id": "extract-version",
+      "name": "Extract Version",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 마지막으로 본 버전을 워크플로 스태틱 데이터에 보관한다\n// (외부 저장소 없이 n8n 안에서 상태를 유지하는 표준 방법).\nconst staticData = $getWorkflowStaticData('global');\nconst current = $json.version;\n\nif (!$json.parsed) {\n  return [{ json: { changed: true, reason: 'parse_failed',\n                    message: $json.note, version: null } }];\n}\n\nconst previous = staticData.bindingdb_version || null;\nstaticData.bindingdb_version = current;\n\nif (previous === null) {\n  return [{ json: { changed: false, reason: 'first_run',\n                    message: `최초 실행 — 현재 버전 ${current} 기록`, version: current } }];\n}\nif (previous === current) {\n  return [{ json: { changed: false, reason: 'unchanged',\n                    message: `변화 없음 (${current})`, version: current } }];\n}\nreturn [{ json: { changed: true, reason: 'new_release',\n                  message: `새 릴리스: ${previous} → ${current}`, version: current } }];"
+      },
+      "id": "compare-to-known",
+      "name": "Compare To Known",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.changed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "changed?",
+      "name": "Changed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: '📦 BindingDB 감시\\n' + $json.message + '\\n\\n재학습은 자동으로 돌지 않습니다. 필요하면 GPU 머신에서 `python -m ralph.loop` 를 직접 실행하세요.' }) }}",
+        "options": {}
+      },
+      "id": "notify",
+      "name": "Notify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        200
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "quiet",
+      "name": "Quiet",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Weekly Mon 03:00": {
+      "main": [
+        [
+          {
+            "node": "Fetch Release Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Release Page": {
+      "main": [
+        [
+          {
+            "node": "Extract Version",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Version": {
+      "main": [
+        [
+          {
+            "node": "Compare To Known",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compare To Known": {
+      "main": [
+        [
+          {
+            "node": "Changed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Changed?": {
+      "main": [
+        [
+          {
+            "node": "Notify",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Quiet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "description": "주 1회 BindingDB 릴리스 변경 감지. 알림만 보내고 재학습은 사람이 결정."
+  },
+  "tags": [
+    {
+      "name": "fusiondti"
+    }
+  ]
+}

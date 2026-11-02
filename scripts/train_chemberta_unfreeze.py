@@ -72,6 +72,8 @@ parser.add_argument("--patience",    type=int,   default=10)
 parser.add_argument("--seed",        type=int,   default=42)
 parser.add_argument("--max_length",  type=int,   default=128,
                     help="ChemBERTa tokenizer max_length (default=128, SMILES 대부분 <100 토큰)")
+parser.add_argument("--no_mlflow", action="store_true",
+                    help="MLflow 실험 추적을 끈다 (result.json은 그대로 저장)")
 args = parser.parse_args()
 
 torch.manual_seed(args.seed)
@@ -440,6 +442,17 @@ with open(out_dir / "result.json", "w") as f:
     json.dump(result, f, indent=2, ensure_ascii=False)
 
 print(f"결과 저장: {out_dir}/result.json")
+
+# ── MLflow 실험 추적 ──────────────────────────────────────────────────────────
+# result.json은 그대로 남기고 MLflow에도 같은 내용을 올린다.
+# 추적 서버가 없거나 mlflow가 미설치여도 log_result는 조용히 통과한다.
+if not args.no_mlflow:
+    # 스크립트 직접 실행 시 sys.path에 프로젝트 루트가 없다.
+    sys.path.insert(0, str(ROOT))
+    from mlops.tracking import log_result
+    log_result(result, out_dir,
+               extra_tags={"hparams": f"unfreeze={args.unfreeze},split={args.split},bs={args.batch_size}"})
+
 print(f"로그 저장: {LOG_DIR / _log_name}")
 sys.stdout = sys.__stdout__
 _log_fp.close()

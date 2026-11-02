@@ -35,3 +35,34 @@ data/__MACOSX/
 data/KIBA/
 data/BindingDB/*.tsv
 data/BindingDB/*.zip
+
+# ── MLOps (Phase 5) ───────────────────────────────────────────
+# .gitignore는 줄 끝 주석을 지원하지 않는다 — 주석은 반드시 별도 줄에.
+# MLflow 파일 백엔드(레거시) / 아티팩트 저장소 — 둘 다 results/ 에서 재생성 가능
+mlruns/
+mlartifacts/
+# 로컬 MLflow SQLite 추적 DB
+mlflow.db
+# LangGraph SQLite 체크포인터
+agent_checkpoints.db
+.pytest_cache/
+# SelfTest 리포트 / Ralph 루프 상태 — 실행마다 생기는 산출물
+results/selftest/
+results/ralph/
+
+# ── 대용량 데이터 · 모델 가중치 · 비밀값 (커밋 금지) ─────────────────
+# 원본 TSV(9GB)와 전처리 CSV 모두 재생성 가능 — scripts/preprocess_bindingdb.py
+data/BindingDB/
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.ckpt
+checkpoints/
+# 재학습 기준선 결과 — 포트폴리오용 요약만 나중에 선별해서 넣는다
+results/SaProt-650M-bindingdb-3di-chemberta-bdb202610/
+.env.*
+!.env.example
+
+# 개인 메모 — 저장소에 올리지 않는다 (공개용 기술 설명은 별도로 다듬는다)
+docs/SKILLS_MAP.md

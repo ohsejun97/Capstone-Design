@@ -1,0 +1,201 @@
+{
+  "name": "FusionDTI — Batch Screening",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "fusiondti/screen",
+        "httpMethod": "POST",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "manual---webhook",
+      "name": "Manual / Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 입력: { \"target\": \"ABL1\", \"drugs\": [\"Imatinib\", \"Dasatinib\", ...] }\n// 또는  { \"target\": \"ABL1\", \"drugs_csv\": \"Imatinib,Dasatinib\" }\nconst body = $input.first().json.body || $input.first().json;\nconst target = body.target;\nif (!target) throw new Error('target이 없습니다.');\n\nlet drugs = body.drugs;\nif (!drugs && body.drugs_csv) {\n  drugs = String(body.drugs_csv).split(',').map(s => s.trim()).filter(Boolean);\n}\nif (!Array.isArray(drugs) || drugs.length === 0) {\n  throw new Error('drugs 배열이 비어 있습니다.');\n}\n\n// 한 건씩 흐르도록 item으로 펼친다.\nreturn drugs.map(d => ({ json: { drug_name: d, protein_name: target } }));"
+      },
+      "id": "read-drug-list",
+      "name": "Read Drug List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "one-at-a-time",
+      "name": "One At A Time",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://api:8000/predict",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ drug_name: $json.drug_name, protein_name: $json.protein_name }) }}",
+        "options": {
+          "timeout": 120000,
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "predict",
+      "name": "Predict",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 모든 배치의 응답을 모아 pKd 내림차순으로 정렬한다.\nconst rows = [];\nfor (const item of $input.all()) {\n  const status = item.json.statusCode;\n  const body = item.json.body || {};\n  if (status !== 200) {\n    rows.push({ drug: body.query_name || '?', pKd: null,\n                error: body.detail || `HTTP ${status}` });\n    continue;\n  }\n  rows.push({\n    drug: (body.drug && body.drug.name) || '?',\n    target: (body.protein && body.protein.gene) || '?',\n    pKd: body.prediction ? body.prediction.pKd : null,\n    interpretation: body.prediction ? body.prediction.interpretation : '',\n    used_3di: body.prediction ? body.prediction.used_3di : null,\n  });\n}\n\nconst ok = rows.filter(r => r.pKd !== null).sort((a, b) => b.pKd - a.pKd);\nconst failed = rows.filter(r => r.pKd === null);\n\nconst top = ok.slice(0, 10)\n  .map((r, i) => `${i + 1}. ${r.drug}  pKd ${r.pKd.toFixed(2)}  ${r.interpretation}`)\n  .join('\\n');\n\nreturn [{ json: {\n  target: ok.length ? ok[0].target : '?',\n  n_total: rows.length,\n  n_ok: ok.length,\n  n_failed: failed.length,\n  top10: top,\n  results: ok,\n  failures: failed,\n}}];"
+      },
+      "id": "rank-&-summarize",
+      "name": "Rank & Summarize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "csv",
+        "options": {
+          "fileName": "={{ 'screening_' + $json.target + '.csv' }}"
+        }
+      },
+      "id": "write-csv",
+      "name": "Write CSV",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: '🧪 배치 스크리닝 완료 — 표적 ' + $json.target + '\\n' + $json.n_ok + '/' + $json.n_total + '건 성공\\n\\n' + $json.top10 }) }}",
+        "options": {}
+      },
+      "id": "post-summary",
+      "name": "Post Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Manual / Webhook": {
+      "main": [
+        [
+          {
+            "node": "Read Drug List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Drug List": {
+      "main": [
+        [
+          {
+            "node": "One At A Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One At A Time": {
+      "main": [
+        [
+          {
+            "node": "Rank & Summarize",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Predict",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Predict": {
+      "main": [
+        [
+          {
+            "node": "One At A Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rank & Summarize": {
+      "main": [
+        [
+          {
+            "node": "Write CSV",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Post Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "description": "약물 목록 × 표적 1개를 일괄 예측해 pKd 순위와 CSV를 낸다."
+  },
+  "tags": [
+    {
+      "name": "fusiondti"
+    }
+  ]
+}

@@ -135,7 +135,7 @@ source ~/.bashrc
 | `DeepPurpose` | DAVIS / KIBA 데이터 로드 |
 | `rdkit` | Morgan Fingerprint, SMILES → 분자 그래프 |
 | `FoldSeek` | 단백질 PDB → 3Di 토큰 추출 |
-| `smolagents` | Phase 3 Agent 오케스트레이션 (예정) |
+| `langgraph` | Phase 3 Agent 오케스트레이션 (`requirements-mlops.txt`) |
 | `pandas` / `numpy` | 데이터 전처리 |
 | `scipy` | Pearson r, CI 계산 |
 

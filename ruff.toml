@@ -1,0 +1,49 @@
+# Ruff 설정 — Phase 5 신규 코드(services/agent/graph/, mlops/, tests/, web_pipeline/backend.py)에 적용.
+#
+# 대상: services/, mlops/, selftest/, ralph/, n8n/, tests/, web_pipeline/backend.py
+# 기존 학습 스크립트(scripts/, tools/, train_dti_saprot.py)는 대상에서 뺐다.
+# 스타일이 다르고(정렬된 대입, 긴 표 형식 출력) 지금 손댈 이유가 없다.
+# CI의 lint 잡도 같은 범위만 검사한다.
+
+line-length = 100
+target-version = "py310"
+
+exclude = [
+    "scripts/",
+    "tools/",
+    "experiments/",
+    "train_dti_saprot.py",
+    "services/agent/app/api.py",
+    "web_pipeline/app.py",
+]
+
+[lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # bugbear — 실제 버그 패턴
+    "UP",   # pyupgrade
+    "SIM",  # 단순화
+    "RUF",  # ruff 고유 규칙
+]
+ignore = [
+    "E501",    # 줄 길이는 formatter가 아니라 line-length로 관리
+    "B008",    # FastAPI의 Depends()/Query() 기본값 패턴과 충돌
+    "RUF001",  # 한글 주석의 전각 문자(·, →)를 모호 문자로 잡는다
+    "RUF002",
+    "RUF003",
+]
+
+[lint.per-file-ignores]
+# 테스트는 픽스처 이름 가림(shadowing)과 단언 스타일이 자유로워야 한다.
+"tests/*" = ["B011"]
+# backfill은 `python -m mlops.backfill`뿐 아니라 파일 경로로도 실행될 수 있어야
+# 하므로 import 전에 sys.path를 손본다 → 모듈 상단 import 규칙(E402)을 못 지킨다.
+"mlops/backfill.py" = ["E402"]
+# runner도 같은 이유로 sys.path를 먼저 손본다.
+"selftest/runner.py" = ["E402"]
+"selftest/build_golden_set.py" = ["E402"]
+
+[lint.isort]
+known-first-party = ["services", "mlops", "tools", "web_pipeline"]

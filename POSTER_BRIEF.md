@@ -93,7 +93,7 @@ User Natural Language Query
           │
           ▼
   ┌──────────────────┐
-  │  LLM-based Agent │   ← smolagents (ReAct paradigm)
+  │  LLM-based Agent │   ← LangGraph (stateful graph)
   │ (Orchestrator)   │
   └───┬──────────┬───┘
       │          │
@@ -212,7 +212,7 @@ SaProt-650M (frozen, FP16)
 | 5 | **Protein Name Resolver** | Gene/protein name | UniProt ID + sequence | UniProt Search API |
 
 **아래 설명:**
-> The LLM agent (smolagents, ReAct paradigm) dynamically selects and chains these tools based on the user query — no manual pipeline specification required.
+> A LangGraph state machine orchestrates these tools. The LLM handles entity extraction; the graph handles control flow — including bounded retries when a brand name or fusion-gene alias fails to resolve, and out-of-distribution warnings for non-kinase targets.
 
 ---
 
@@ -225,7 +225,7 @@ SaProt-650M (frozen, FP16)
 Protein Encoder  : SaProt-650M-AF2 (ESM-2 기반, FP16)
 Drug Encoder     : ChemBERTa-zinc-base (RoBERTa 기반)
 Structural Tokens: FoldSeek 3Di via AlphaFold DB
-Agent Framework  : smolagents (Hugging Face, ReAct)
+Agent Framework  : LangGraph (stateful graph, checkpointed)
 DTI Head         : PyTorch MLP (~1.5M params)
 Protein Structure: AlphaFold DB (EBI REST API)
 Ligand 3D        : RDKit ETKDGv3 + MMFF94
@@ -248,7 +248,7 @@ Hardware         : GTX 1650 SUPER (4 GB VRAM), WSL2
 > We propose a Bio-AI Agent System that answers natural language queries about drug-target binding affinity without requiring expert knowledge. The core DTI model achieves DAVIS r = 0.8677 and KIBA r = 0.8594 using a 4 GB consumer GPU — competitive with SOTA methods requiring >8 GB VRAM.
 
 **Future Work (bullet):**
-- Full agent orchestration: connecting all 5 tools under smolagents ReAct
+- Full agent orchestration: all 5 tools wired into a LangGraph state machine
 - End-to-end demo: natural language query → structured binding affinity report
 - Cold-split evaluation for generalization to unseen drug scaffolds
 - SaProt fine-tuning with larger GPU resources
@@ -294,7 +294,7 @@ The poster should include these sections in order:
 
 1. MOTIVATION: Drug discovery costs $1B+ and 10–15 years. Current DTI tools require expert knowledge (SMILES, UniProt IDs). Proposed solution: natural language query → AI agent → binding affinity prediction.
 
-2. SYSTEM ARCHITECTURE: A pipeline diagram where a user's natural language question is processed by an LLM-based ReAct agent (smolagents). The agent orchestrates 5 tools: Drug Name Resolver (PubChem), Protein Name Resolver (UniProt), DTI Prediction Tool (core, highlighted), Ligand Structure Tool (RDKit), Protein Structure Tool (AlphaFold).
+2. SYSTEM ARCHITECTURE: A pipeline diagram where a user's natural language question is processed by a LangGraph state machine (an LLM extracts the drug and target names; the graph routes the rest, with retry branches on failed lookups). The graph orchestrates 5 tools: Drug Name Resolver (PubChem), Protein Name Resolver (UniProt), DTI Prediction Tool (core, highlighted), Ligand Structure Tool (RDKit), Protein Structure Tool (AlphaFold).
 
 3. DTI MODEL RESULTS: Three stat cards showing Pearson r = 0.8923 (BindingDB), 0.8677 (DAVIS), 0.8594 (KIBA). SOTA comparison table: our model achieves competitive results with only 4 GB VRAM vs SOTA requiring >8–16 GB.
 

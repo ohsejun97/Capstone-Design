@@ -99,8 +99,10 @@ st.markdown("""
 
 @st.cache_resource(show_spinner=False)
 def _load_dti_models():
-    from tools.dti_tool import _load_models
-    _load_models()
+    # local 백엔드면 모델을 이 프로세스에 로드하고, http 백엔드면
+    # API 서버가 모델을 다 올렸는지 확인만 한다. backend.py 참조.
+    from web_pipeline import backend
+    return backend.warmup()
 
 
 def _smiles_to_png(smiles: str, size: tuple = (380, 260)) -> bytes | None:
@@ -424,8 +426,8 @@ with right:
                 error_msg = "Drug input is empty."
             elif drug_mode == "Drug Name":
                 st.write(f"💊 Resolving **{drug_val_clean}** via PubChem...")
-                from tools.pubchem_tool import resolve_drug_name
-                drug_meta = resolve_drug_name(drug_val_clean)
+                from web_pipeline import backend
+                drug_meta = backend.resolve_drug(drug_val_clean)
                 if "error" in drug_meta:
                     error_msg = f"Drug not found: {drug_meta['error']}"
                 else:
@@ -447,8 +449,8 @@ with right:
                     error_msg = "Protein input is empty."
                 elif prot_mode == "Gene Name":
                     st.write(f"🧫 Resolving **{prot_val_clean}** via UniProt...")
-                    from tools.uniprot_tool import resolve_protein_name
-                    prot_meta = resolve_protein_name(prot_val_clean)
+                    from web_pipeline import backend
+                    prot_meta = backend.resolve_protein(prot_val_clean)
                     if "error" in prot_meta:
                         error_msg = f"Protein not found: {prot_meta['error']}"
                     else:
@@ -471,8 +473,8 @@ with right:
             # Step 4: DTI prediction
             if not error_msg:
                 st.write("🔬 Running DTI prediction (SaProt-650M + ft-ChemBERTa + MLP)...")
-                from tools.dti_tool import predict_binding
-                pred_result = predict_binding(final_smiles, aa_seq)
+                from web_pipeline import backend
+                pred_result = backend.predict(final_smiles, aa_seq)
                 if "error" in pred_result:
                     error_msg = f"Prediction error: {pred_result['error']}"
                 else:

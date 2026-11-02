@@ -10,7 +10,7 @@ Endpoints:
     POST /predict                 — Full DTI prediction pipeline
 
 Run (프로젝트 루트에서):
-    uvicorn web_pipeline.api:app --reload --port 8000
+    uvicorn services.agent.app.api:app --reload --port 8000
 """
 
 import sys
@@ -22,7 +22,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-ROOT = Path(__file__).parent.parent   # Capstone-Design/
+ROOT = Path(__file__).parents[3]   # Capstone-Design/ (services/agent/app/api.py 기준)
 sys.path.insert(0, str(ROOT))
 
 # ── App setup ─────────────────────────────────────────────────────────────────
@@ -231,6 +231,117 @@ async def predict(req: PredictRequest):
         "elapsed_seconds": round(time.time() - t0, 2),
     }
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Automation endpoints
+#
+# n8n 워크플로가 부르는 자리다. n8n 이미지에는 Python도 torch도 없으므로
+# executeCommand로 스크립트를 돌릴 수 없다 — 모델과 코드를 가진 이 컨테이너가
+# HTTP로 노출하는 것이 맞다. n8n은 "언제 부를지"와 "어디로 알릴지"만 맡는다.
+# ══════════════════════════════════════════════════════════════════════════════
+
+class AskRequest(BaseModel):
+    query: str
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [{"query": "Does Imatinib bind to BCR-ABL?"}]
+        }
+    }
+
+
+@app.post("/agent/ask", tags=["Agent"])
+async def agent_ask(req: AskRequest):
+    """자연어 질의를 LangGraph 에이전트에 그대로 태운다.
+
+    /predict 와의 차이: 이쪽은 이름 해석 실패 시 재시도, OOD 경고, 구조 보강까지
+    전 경로를 돈다. 실행 경로(trace)도 함께 돌려주므로 디버깅에 쓸 수 있다.
+    """
+    if not req.query.strip():
+        raise HTTPException(status_code=422, detail="query가 비어 있습니다.")
+
+    from services.agent.graph.graph import build_graph
+    from services.agent.graph.state import new_state
+
+    final = build_graph().invoke(new_state(req.query))
+
+    return {
+        "ok": final.get("stage") == "done",
+        "stage": final.get("stage"),
+        "answer": final.get("answer", ""),
+        "prediction": final.get("prediction", {}),
+        "drug": {k: v for k, v in final.get("drug", {}).items() if k != "sequence"},
+        "protein": {k: v for k, v in final.get("protein", {}).items()
+                    if k != "sequence"},
+        "warnings": final.get("warnings", []),
+        "trace": final.get("trace", []),
+    }
+
+
+@app.post("/selftest", tags=["System"])
+async def run_selftest_endpoint(
+    skip_agent: bool = Query(default=False,
+                             description="에이전트 계층을 건너뛴다 (외부 API 미사용)"),
+    skip_contracts: bool = Query(default=True,
+                                 description="외부 API 계약 검사를 건너뛴다"),
+    tol: float = Query(default=0.05, description="쌍별 pKd 허용 이탈"),
+):
+    """골든셋 회귀·드리프트 점검을 실행하고 리포트를 돌려준다.
+
+    HTTP 상태는 항상 200이다 — 회귀는 '서버 오류'가 아니라 '보고할 사실'이고,
+    n8n이 본문의 status를 보고 알림 여부를 정한다. 실행 자체가 실패하면 500.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    golden_path = ROOT / "selftest" / "golden_set.json"
+    if not golden_path.exists():
+        raise HTTPException(
+            status_code=503,
+            detail="골든셋이 없습니다. python -m selftest.build_golden_set 을 먼저 실행하세요.",
+        )
+
+    from selftest.runner import (
+        _default_agent_runner,
+        _default_model_predictor,
+        _load_contract_callers,
+        run_selftest,
+    )
+
+    golden = _json.loads(golden_path.read_text())
+    baseline_path = ROOT / "selftest" / "baseline.json"
+    baseline = (_json.loads(baseline_path.read_text()).get("predictions", {})
+                if baseline_path.exists() else {})
+
+    try:
+        report = run_selftest(
+            golden,
+            baseline,
+            predict_model=_default_model_predictor(),
+            run_agent=None if skip_agent else _default_agent_runner(),
+            contract_callers=None if skip_contracts else _load_contract_callers(),
+            tol=tol,
+        )
+    except Exception as exc:                                    # noqa: BLE001
+        raise HTTPException(status_code=500,
+                            detail=f"SelfTest 실행 실패: {exc}") from exc
+
+    # 리포트를 파일로도 남긴다 — 사람이 나중에 들여다볼 수 있도록.
+    report_dir = _Path(ROOT / "results" / "selftest")
+    try:
+        report_dir.mkdir(parents=True, exist_ok=True)
+        (report_dir / "latest.json").write_text(
+            _json.dumps(report, indent=2, ensure_ascii=False))
+    except OSError:
+        pass        # 읽기 전용 마운트여도 리포트 반환은 계속한다
+
+    try:
+        from selftest.runner import log_to_mlflow
+        log_to_mlflow(report)
+    except Exception:                                           # noqa: BLE001
+        pass
+
+    return report
 
 # ── Dev entry point ───────────────────────────────────────────────────────────
 if __name__ == "__main__":

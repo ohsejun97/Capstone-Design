@@ -1,0 +1,12 @@
+# 비민감 설정만 여기 둔다. 비밀번호는 secret.yaml로.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fusiondti-config
+  namespace: fusiondti
+data:
+  # UI는 클러스터 내부 DNS로 API를 찾는다 (Service 이름).
+  FUSIONDTI_BACKEND: "http"
+  FUSIONDTI_API_URL: "http://fusiondti-api:8000"
+  MLFLOW_TRACKING_URI: "http://mlflow:5000"
+  HF_HOME: "/cache/huggingface"

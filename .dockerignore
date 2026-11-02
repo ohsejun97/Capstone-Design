@@ -1,0 +1,32 @@
+# 빌드 컨텍스트에서 제외 — 이미지 크기와 빌드 시간에 직접 영향을 준다.
+# results/ 는 수백 MB(.pt 가중치), data/ 는 10MB+ CSV, cache/ 는 PDB 수천 개다.
+# 셋 다 런타임에 볼륨으로 마운트되므로 이미지에 들어갈 이유가 없다.
+
+.git/
+.github/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# 데이터·산출물 (런타임 볼륨)
+results/
+data/
+cache/
+logs/
+mlruns/
+mlartifacts/
+*.db
+
+# 개발 환경
+.venv/
+venv/
+.env
+*.ipynb
+.idea/
+.vscode/
+
+# 문서 (이미지에 불필요)
+docs/
+*.md
+!README.md
