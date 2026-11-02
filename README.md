@@ -1,5 +1,7 @@
 # Bio-AI Agent System for Drug–Target Interaction Analysis
 
+> **안내**: 이 저장소는 DTI 모델·실험 자산 저장소다. 이후 작업(LangGraph 에이전트, MLflow, Docker Compose, GitHub Actions CI, n8n)은 `phase1/skeleton` 브랜치에 있고, 에이전트 본체는 2026-10부터 별도 저장소 agent-platform으로 옮겼다.
+
 > Capstone Design Project — Bio-AI pipeline that answers natural language queries about drug-target interactions using a frozen protein language model, structural databases, and LLM orchestration.
 
 ---
